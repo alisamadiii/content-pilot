@@ -8,8 +8,24 @@ if (!connectionString) {
   throw new Error('DATABASE_URL is not set');
 }
 
-// Neon and most managed Postgres require TLS; local docker does not.
-const needsSsl = !/localhost|127\.0\.0\.1|@db:/.test(connectionString);
+// TLS decision:
+//  - DATABASE_SSL=require|disable overrides everything
+//  - otherwise require TLS only for hosts with a dotted domain (managed
+//    Postgres like Neon: ep-xxx.aws.neon.tech) — internal Docker/Coolify
+//    hosts are single-label and speak plaintext.
+const needsSsl = (() => {
+  const override = process.env.DATABASE_SSL?.toLowerCase();
+  if (override === 'require' || override === 'true') return true;
+  if (override === 'disable' || override === 'false') return false;
+  if (/[?&]sslmode=require/.test(connectionString)) return true;
+  if (/[?&]sslmode=disable/.test(connectionString)) return false;
+  try {
+    const host = new URL(connectionString).hostname;
+    return host.includes('.') && host !== '127.0.0.1';
+  } catch {
+    return false;
+  }
+})();
 
 const globalForDb = globalThis as unknown as {
   pgClient?: ReturnType<typeof postgres>;
