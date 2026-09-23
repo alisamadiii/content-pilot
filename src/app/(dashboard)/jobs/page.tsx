@@ -16,7 +16,10 @@ type Filters = {
   by?: string;
   from?: string;
   to?: string;
+  page?: string;
 };
+
+const PAGE_SIZE = 25;
 
 const JobsPage = async ({
   searchParams,
@@ -65,6 +68,13 @@ const JobsPage = async ({
   }
 
   const hasFilters = conditions.length > 0;
+  const page = Math.max(1, Number(filters.page) || 1);
+
+  const [{ total }] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(job)
+    .where(hasFilters ? and(...conditions) : undefined);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const rows = await db
     .select({
@@ -86,7 +96,8 @@ const JobsPage = async ({
     .from(job)
     .where(hasFilters ? and(...conditions) : undefined)
     .orderBy(desc(job.createdAt))
-    .limit(100);
+    .limit(PAGE_SIZE)
+    .offset((page - 1) * PAGE_SIZE);
 
   const repos = await db
     .select({ repoId: repo.repoId, owner: repo.owner, repo: repo.repo })
@@ -128,9 +139,8 @@ const JobsPage = async ({
       <AutoRefresh seconds={10} />
       <h1>jobs</h1>
       <p className="subtitle">
-        {hasFilters
-          ? `${rows.length} matching request${rows.length === 1 ? '' : 's'}`
-          : 'last 100 edit requests, newest first'}
+        {total} request{total === 1 ? '' : 's'}
+        {hasFilters ? ' matching' : ''} · page {page} of {totalPages}
       </p>
 
       <form className="card filter-bar" method="GET" action="/jobs">
@@ -279,8 +289,40 @@ const JobsPage = async ({
           </tbody>
         </table>
       )}
+
+      {totalPages > 1 && (
+        <div className="row" style={{ marginTop: 16, justifyContent: 'center' }}>
+          {page > 1 ? (
+            <Link href={pageHref(filters, page - 1)}>← prev</Link>
+          ) : (
+            <span className="muted">← prev</span>
+          )}
+          <span className="muted">
+            {page} / {totalPages}
+          </span>
+          {page < totalPages ? (
+            <Link href={pageHref(filters, page + 1)}>next →</Link>
+          ) : (
+            <span className="muted">next →</span>
+          )}
+        </div>
+      )}
     </>
   );
+};
+
+const pageHref = (filters: Filters, page: number) => {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value && key !== 'page') {
+      params.set(key, value);
+    }
+  }
+  if (page > 1) {
+    params.set('page', String(page));
+  }
+  const query = params.toString();
+  return query ? `/jobs?${query}` : '/jobs';
 };
 
 export default JobsPage;
