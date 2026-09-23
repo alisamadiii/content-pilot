@@ -88,22 +88,6 @@ export const repo = pgTable('repo', {
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
-// Whitelisted site origins for the public intake endpoint. `origin` is globally
-// unique — a given origin resolves to exactly one repo, which is the intake's
-// security boundary (no token). Managed from the dashboard /domains page.
-export const domain = pgTable(
-  'domain',
-  {
-    id: serial('id').primaryKey(),
-    origin: text('origin').notNull().unique(),
-    repoId: integer('repo_id')
-      .notNull()
-      .references(() => repo.repoId, { onDelete: 'cascade' }),
-    createdAt: timestamp('created_at').notNull().defaultNow(),
-  },
-  (table) => [index('idx_domain_repo_id').on(table.repoId)]
-);
-
 export const JOB_STATUS_VALUES = [
   'queued',
   'running',

@@ -1,63 +1,58 @@
 import { and, count, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { client, db } from '@/db';
-import { domain, job, repo } from '@/db/schema';
+import { job, repo } from '@/db/schema';
+import { verifyApiKey } from '@/lib/api-key';
 
-// Mirrors jobs/route.ts — the same abuse guard applies to the public intake.
+// Mirrors jobs/route.ts — the same abuse guard applies to the intake.
 const MAX_QUEUED_PER_REPO = 5;
 
-// Public, token-less intake for the cms-bridge overlay. Security is the
-// server-side Origin whitelist on the repo row — never trust client-sent repo
-// identity; the origin resolves the target repo.
+// Public intake for the cms-bridge overlay. Auth = a bearer token the hub
+// injects into the edit-mode iframe URL (never baked into the site bundle).
+// The token is a normal API key created in Settings; the browser sends it as
+// `Authorization: Bearer <token>`. Repo identity comes from the site's build
+// config and is trusted because the request is authenticated.
 const intakeSchema = z.object({
+  repoId: z.number().int().positive(),
+  owner: z.string().trim().min(1).max(200),
+  repo: z.string().trim().min(1).max(200),
+  branch: z.string().trim().min(1).max(200).optional(),
   prompt: z.string().trim().min(10).max(4000),
   sourceRef: z.string().trim().max(500).optional(),
   elementText: z.string().trim().max(2000).optional(),
   pageUrl: z.string().trim().max(1000).optional(),
 });
 
-/** Resolve the repo a whitelisted `origin` maps to (exact, unique match). */
-const repoForOrigin = async (origin: string) => {
-  const [row] = await db
-    .select({
-      repoId: repo.repoId,
-      owner: repo.owner,
-      repo: repo.repo,
-      branch: repo.branch,
-    })
-    .from(domain)
-    .innerJoin(repo, eq(repo.repoId, domain.repoId))
-    .where(eq(domain.origin, origin))
-    .limit(1);
-  return row ?? null;
+const bearer = (request: Request) => {
+  const header = request.headers.get('authorization') || '';
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : null;
 };
 
-const corsHeaders = (origin: string) => ({
-  'Access-Control-Allow-Origin': origin,
+const corsHeaders = (origin: string | null) => ({
+  // Token is the security boundary, not the origin — echo the caller so the
+  // browser fetch from the client site is allowed.
+  'Access-Control-Allow-Origin': origin || '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Max-Age': '86400',
   Vary: 'Origin',
 });
 
 export const OPTIONS = async (request: Request) => {
-  const origin = request.headers.get('origin');
-  if (!origin) return new Response(null, { status: 403 });
-  const matched = await repoForOrigin(origin);
-  if (!matched) return new Response(null, { status: 403 });
-  return new Response(null, { status: 204, headers: corsHeaders(origin) });
+  return new Response(null, {
+    status: 204,
+    headers: corsHeaders(request.headers.get('origin')),
+  });
 };
 
 export const POST = async (request: Request) => {
-  const origin = request.headers.get('origin');
-  if (!origin) {
-    return Response.json({ error: 'Forbidden' }, { status: 403 });
+  const headers = corsHeaders(request.headers.get('origin'));
+
+  const key = await verifyApiKey(bearer(request));
+  if (!key) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401, headers });
   }
-  const site = await repoForOrigin(origin);
-  if (!site) {
-    // Do not leak whether the origin exists — same response for all misses.
-    return Response.json({ error: 'Forbidden' }, { status: 403 });
-  }
-  const headers = corsHeaders(origin);
 
   const parsed = intakeSchema.safeParse(
     await request.json().catch(() => null)
@@ -69,15 +64,13 @@ export const POST = async (request: Request) => {
     );
   }
   const input = parsed.data;
+  const branch = input.branch || 'main';
 
   const [queued] = await db
     .select({ value: count() })
     .from(job)
     .where(
-      and(
-        eq(job.repoId, site.repoId),
-        inArray(job.status, ['queued', 'running'])
-      )
+      and(eq(job.repoId, input.repoId), inArray(job.status, ['queued', 'running']))
     );
   if (queued.value >= MAX_QUEUED_PER_REPO) {
     return Response.json(
@@ -89,13 +82,27 @@ export const POST = async (request: Request) => {
     );
   }
 
+  // Register/refresh the repo (trusted — the request is authenticated).
+  await db
+    .insert(repo)
+    .values({ repoId: input.repoId, owner: input.owner, repo: input.repo, branch })
+    .onConflictDoUpdate({
+      target: repo.repoId,
+      set: {
+        owner: input.owner,
+        repo: input.repo,
+        branch,
+        updatedAt: new Date(),
+      },
+    });
+
   const [created] = await db
     .insert(job)
     .values({
-      repoId: site.repoId,
-      owner: site.owner,
-      repo: site.repo,
-      branch: site.branch,
+      repoId: input.repoId,
+      owner: input.owner,
+      repo: input.repo,
+      branch,
       prompt: input.prompt,
       requestedBy: 'website visitor',
       sourceRef: input.sourceRef,
@@ -104,7 +111,6 @@ export const POST = async (request: Request) => {
     })
     .returning({ id: job.id, status: job.status });
 
-  // Wake the worker so the edit doesn't wait for the next poll.
   try {
     await client.notify('cp_run_now', '');
   } catch {
