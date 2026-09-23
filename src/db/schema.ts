@@ -88,6 +88,22 @@ export const repo = pgTable('repo', {
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
+// Whitelisted site origins for the public intake endpoint. `origin` is globally
+// unique — a given origin resolves to exactly one repo, which is the intake's
+// security boundary (no token). Managed from the dashboard /domains page.
+export const domain = pgTable(
+  'domain',
+  {
+    id: serial('id').primaryKey(),
+    origin: text('origin').notNull().unique(),
+    repoId: integer('repo_id')
+      .notNull()
+      .references(() => repo.repoId, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => [index('idx_domain_repo_id').on(table.repoId)]
+);
+
 export const JOB_STATUS_VALUES = [
   'queued',
   'running',
@@ -112,10 +128,14 @@ export const job = pgTable(
     requesterId: text('requester_id'),
     // Display label (name/email) shown in the dashboard
     requestedBy: text('requested_by'),
-    // Future element-picker context
+    // Element-picker context
     fieldPath: text('field_path'),
     pageUrl: text('page_url'),
     elementSelector: text('element_selector'),
+    // cms-bridge source annotation: `<project>:<file>:<line>` from data-cms-src,
+    // and the element's current text, so the AI edits the exact source location.
+    sourceRef: text('source_ref'),
+    elementText: text('element_text'),
     status: text('status').$type<JobStatus>().notNull().default('queued'),
     // Client-facing error / rejection reason
     error: text('error'),

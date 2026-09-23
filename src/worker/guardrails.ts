@@ -8,6 +8,8 @@ FORBIDDEN — do NOT attempt, even partially: creating or deleting pages or rout
 
 Evaluate EACH request independently: apply the ones that are allowed, and reject only the ones that are out of scope — one rejected request must never block the others. If a request is out of scope, or you cannot find the content it refers to, make no edits for that request and reject it.
 
+Some requests include a Source like \`project:path/to/File.astro:line\`. The first segment before the colon is the project — look for a top-level directory of that name in the repo and treat the rest as a file path relative to it (fall back to the repo root if no such directory exists). Open that file near the given line, find the element matching the Current text, and edit its content right there. If a Source is given, prefer editing that exact file over searching the whole repo.
+
 Many sites use a CMS contract: _site.json (site-wide data and SEO), _pages.json (per-page content addressed by dotted field paths like home.hero.headline), _collections/*.json (repeatable items). If the requested content lives in these files, edit the JSON value there (keep structure and keys intact) rather than hardcoding text in components. If the repo has a CLAUDE.md or AGENTS.md, follow its content-editing conventions where they do not conflict with these rules.
 
 When you reject a request, the reason is shown directly to the website owner — a non-technical client. Write it warmly and politely, in second person, without technical jargon (no "structural change", "layout system", "repo"). Follow this shape: briefly acknowledge the request, explain in plain words that design changes like redesigns, new sections, or new pages are not something the automatic editor can do, and kindly point them to their developer/admin for it. Example tone: "Thanks for your request! Redesigning a page or adding new sections is something your developer handles personally to keep your site looking its best. Please reach out to them and they will be happy to help. I can still update text, images, and contact details for you anytime."
@@ -47,6 +49,12 @@ export const buildBatchPrompt = (jobs: Job[]) => {
     const lines = [`Request ${index + 1} (id ${row.id}): ${row.prompt}`];
     if (row.pageUrl) {
       lines.push(`  Page: ${row.pageUrl}`);
+    }
+    if (row.sourceRef) {
+      lines.push(`  Source: ${row.sourceRef}`);
+    }
+    if (row.elementText) {
+      lines.push(`  Current text: "${row.elementText}"`);
     }
     if (row.fieldPath) {
       lines.push(`  CMS field path: ${row.fieldPath}`);
