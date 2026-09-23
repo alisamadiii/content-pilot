@@ -1,7 +1,7 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, lte, or, sql } from 'drizzle-orm';
 import Link from 'next/link';
 import { db } from '@/db';
-import { job } from '@/db/schema';
+import { job, JOB_STATUS_VALUES, repo, type JobStatus } from '@/db/schema';
 import { AutoRefresh } from '../auto-refresh';
 
 export const dynamic = 'force-dynamic';
@@ -9,7 +9,63 @@ export const dynamic = 'force-dynamic';
 const formatDate = (date: Date | null) =>
   date ? date.toISOString().replace('T', ' ').slice(0, 19) : '—';
 
-const JobsPage = async () => {
+type Filters = {
+  repo?: string;
+  status?: string;
+  q?: string;
+  by?: string;
+  from?: string;
+  to?: string;
+};
+
+const JobsPage = async ({
+  searchParams,
+}: {
+  searchParams: Promise<Filters>;
+}) => {
+  const filters = await searchParams;
+
+  const conditions = [];
+  if (filters.repo) {
+    const repoId = Number(filters.repo);
+    if (Number.isInteger(repoId) && repoId > 0) {
+      conditions.push(eq(job.repoId, repoId));
+    } else {
+      conditions.push(
+        or(
+          ilike(job.repo, `%${filters.repo}%`),
+          ilike(sql`${job.owner} || '/' || ${job.repo}`, `%${filters.repo}%`)
+        )
+      );
+    }
+  }
+  if (
+    filters.status &&
+    (JOB_STATUS_VALUES as readonly string[]).includes(filters.status)
+  ) {
+    conditions.push(eq(job.status, filters.status as JobStatus));
+  }
+  if (filters.q) {
+    conditions.push(
+      or(
+        ilike(job.prompt, `%${filters.q}%`),
+        ilike(job.error, `%${filters.q}%`),
+        ilike(job.resultSummary, `%${filters.q}%`)
+      )
+    );
+  }
+  if (filters.by) {
+    conditions.push(ilike(job.requestedBy, `%${filters.by}%`));
+  }
+  if (filters.from && !Number.isNaN(Date.parse(filters.from))) {
+    conditions.push(gte(job.createdAt, new Date(filters.from)));
+  }
+  if (filters.to && !Number.isNaN(Date.parse(filters.to))) {
+    conditions.push(lte(job.createdAt, new Date(`${filters.to}T23:59:59`)));
+  }
+
+  const hasFilters = conditions.length > 0;
+
   const rows = await db
     .select({
       id: job.id,
@@ -28,8 +84,14 @@ const JobsPage = async () => {
       costUsd: job.costUsd,
     })
     .from(job)
+    .where(hasFilters ? and(...conditions) : undefined)
     .orderBy(desc(job.createdAt))
     .limit(100);
+
+  const repos = await db
+    .select({ repoId: repo.repoId, owner: repo.owner, repo: repo.repo })
+    .from(repo)
+    .orderBy(repo.owner, repo.repo);
 
   const running = await db
     .select({
@@ -65,7 +127,50 @@ const JobsPage = async () => {
     <>
       <AutoRefresh seconds={10} />
       <h1>jobs</h1>
-      <p className="subtitle">last 100 edit requests, newest first</p>
+      <p className="subtitle">
+        {hasFilters
+          ? `${rows.length} matching request${rows.length === 1 ? '' : 's'}`
+          : 'last 100 edit requests, newest first'}
+      </p>
+
+      <form className="card filter-bar" method="GET" action="/jobs">
+        <select name="repo" defaultValue={filters.repo ?? ''}>
+          <option value="">all repos</option>
+          {repos.map((entry) => (
+            <option key={entry.repoId} value={String(entry.repoId)}>
+              {entry.owner}/{entry.repo}
+            </option>
+          ))}
+        </select>
+        <select name="status" defaultValue={filters.status ?? ''}>
+          <option value="">any status</option>
+          {JOB_STATUS_VALUES.map((status) => (
+            <option key={status} value={status}>
+              {status}
+            </option>
+          ))}
+        </select>
+        <input
+          type="text"
+          name="q"
+          placeholder="search prompt / result / error"
+          defaultValue={filters.q ?? ''}
+          style={{ maxWidth: 240 }}
+        />
+        <input
+          type="text"
+          name="by"
+          placeholder="requested by"
+          defaultValue={filters.by ?? ''}
+          style={{ maxWidth: 140 }}
+        />
+        <input type="date" name="from" defaultValue={filters.from ?? ''} />
+        <input type="date" name="to" defaultValue={filters.to ?? ''} />
+        <button className="primary" type="submit">
+          filter
+        </button>
+        {hasFilters && <Link href="/jobs">clear</Link>}
+      </form>
 
       <div className="card">
         <div style={{ fontWeight: 600, marginBottom: sessions.size ? 8 : 0 }}>
