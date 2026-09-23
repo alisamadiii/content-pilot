@@ -82,6 +82,7 @@ const JobsPage = async ({
       id: job.id,
       owner: job.owner,
       repo: job.repo,
+      branch: job.branch,
       prompt: job.prompt,
       requestedBy: job.requestedBy,
       status: job.status,
@@ -226,6 +227,7 @@ const JobsPage = async ({
             <tr>
               <th>#</th>
               <th>repo</th>
+              <th>branch</th>
               <th>prompt</th>
               <th>by</th>
               <th>status</th>
@@ -244,6 +246,7 @@ const JobsPage = async ({
                 <td>
                   {row.owner}/{row.repo}
                 </td>
+                <td className="muted">{row.branch}</td>
                 <td className="prompt-cell" title={row.prompt}>
                   {row.prompt}
                 </td>
