@@ -1,8 +1,9 @@
-import { and, count, eq, inArray } from 'drizzle-orm';
-import { z } from 'zod';
-import { client, db } from '@/db';
-import { job, repo } from '@/db/schema';
-import { verifyApiKey } from '@/lib/api-key';
+import { and, count, eq, inArray } from "drizzle-orm";
+import { z } from "zod";
+import { client, db } from "@/db";
+import { job, repo } from "@/db/schema";
+import { verifyApiKey } from "@/lib/api-key";
+import { verifyEditToken } from "@/lib/edit-token";
 
 // Mirrors jobs/route.ts — the same abuse guard applies to the intake.
 const MAX_QUEUED_PER_REPO = 5;
@@ -24,7 +25,7 @@ const intakeSchema = z.object({
 });
 
 const bearer = (request: Request) => {
-  const header = request.headers.get('authorization') || '';
+  const header = request.headers.get("authorization") || "";
   const match = header.match(/^Bearer\s+(.+)$/i);
   return match ? match[1].trim() : null;
 };
@@ -32,60 +33,77 @@ const bearer = (request: Request) => {
 const corsHeaders = (origin: string | null) => ({
   // Token is the security boundary, not the origin — echo the caller so the
   // browser fetch from the client site is allowed.
-  'Access-Control-Allow-Origin': origin || '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  'Access-Control-Max-Age': '86400',
-  Vary: 'Origin',
+  "Access-Control-Allow-Origin": origin || "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Max-Age": "86400",
+  Vary: "Origin",
 });
 
 export const OPTIONS = async (request: Request) => {
   return new Response(null, {
     status: 204,
-    headers: corsHeaders(request.headers.get('origin')),
+    headers: corsHeaders(request.headers.get("origin")),
   });
 };
 
 export const POST = async (request: Request) => {
-  const headers = corsHeaders(request.headers.get('origin'));
+  const headers = corsHeaders(request.headers.get("origin"));
 
-  const key = await verifyApiKey(bearer(request));
-  if (!key) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401, headers });
+  // Two accepted credentials: a long-lived API key (server-to-server), or a
+  // short-lived, repo-scoped edit token minted by the hub for a browser session
+  // (so the API key never reaches the client bundle).
+  const token = bearer(request);
+  const key = await verifyApiKey(token);
+  const edit = key ? null : verifyEditToken(token);
+  if (!key && !edit) {
+    return Response.json({ error: "Unauthorized" }, { status: 401, headers });
   }
 
-  const parsed = intakeSchema.safeParse(
-    await request.json().catch(() => null)
-  );
+  const parsed = intakeSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return Response.json(
-      { error: 'Invalid body', issues: parsed.error.issues },
-      { status: 400, headers }
+      { error: "Invalid body", issues: parsed.error.issues },
+      { status: 400, headers },
     );
   }
   const input = parsed.data;
-  const branch = input.branch || 'main';
+  const branch = input.branch || "main";
+
+  // An edit token authorizes exactly one repo — never trust the body's repo
+  // identity over the token's scope.
+  if (edit && edit.repoId !== input.repoId) {
+    return Response.json({ error: "Forbidden" }, { status: 403, headers });
+  }
 
   const [queued] = await db
     .select({ value: count() })
     .from(job)
     .where(
-      and(eq(job.repoId, input.repoId), inArray(job.status, ['queued', 'running']))
+      and(
+        eq(job.repoId, input.repoId),
+        inArray(job.status, ["queued", "running"]),
+      ),
     );
   if (queued.value >= MAX_QUEUED_PER_REPO) {
     return Response.json(
       {
         error:
-          'Too many pending edits for this site. Please wait for the current ones to finish.',
+          "Too many pending edits for this site. Please wait for the current ones to finish.",
       },
-      { status: 429, headers }
+      { status: 429, headers },
     );
   }
 
   // Register/refresh the repo (trusted — the request is authenticated).
   await db
     .insert(repo)
-    .values({ repoId: input.repoId, owner: input.owner, repo: input.repo, branch })
+    .values({
+      repoId: input.repoId,
+      owner: input.owner,
+      repo: input.repo,
+      branch,
+    })
     .onConflictDoUpdate({
       target: repo.repoId,
       set: {
@@ -104,7 +122,7 @@ export const POST = async (request: Request) => {
       repo: input.repo,
       branch,
       prompt: input.prompt,
-      requestedBy: 'website visitor',
+      requestedBy: "website visitor",
       sourceRef: input.sourceRef,
       elementText: input.elementText,
       pageUrl: input.pageUrl,
@@ -112,7 +130,7 @@ export const POST = async (request: Request) => {
     .returning({ id: job.id, status: job.status });
 
   try {
-    await client.notify('cp_run_now', '');
+    await client.notify("cp_run_now", "");
   } catch {
     // NOTIFY is best-effort; the worker still picks it up on its next poll.
   }
