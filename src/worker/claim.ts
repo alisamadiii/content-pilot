@@ -40,6 +40,7 @@ export const claimBatch = async (): Promise<Job[]> => {
         requester_id AS "requesterId", requested_by AS "requestedBy",
         field_path AS "fieldPath", page_url AS "pageUrl",
         element_selector AS "elementSelector",
+        source_ref AS "sourceRef", element_text AS "elementText",
         status, error, result_summary AS "resultSummary",
         commit_sha AS "commitSha", logs, batch_id AS "batchId",
         input_tokens AS "inputTokens", output_tokens AS "outputTokens",

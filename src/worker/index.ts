@@ -14,6 +14,7 @@ import {
 } from './git';
 import {
   buildBatchPrompt,
+  buildPromptSegments,
   findForbiddenPaths,
   parseVerdicts,
   type Verdict,
@@ -72,6 +73,17 @@ const processBatch = async (jobs: Job[]) => {
   );
 
   const dir = await syncRepo(lead);
+
+  // Persist the exact input we send to Claude (guardrail skill + batch prompt)
+  // as segments on the lead, so the dashboard can show it before the run ends.
+  await db
+    .update(job)
+    .set({
+      promptSent: JSON.stringify(buildPromptSegments(jobs)),
+      updatedAt: new Date(),
+    })
+    .where(eq(job.id, lead.id));
+
   const run = await runClaude({
     cwd: dir,
     prompt: buildBatchPrompt(jobs),
@@ -162,6 +174,14 @@ const processBatch = async (jobs: Job[]) => {
       await finishJob(row.id, {
         status: 'rejected',
         error: verdict.reason,
+        ...baseFields,
+      });
+    } else if (verdict.status === 'failed') {
+      // Claude could not locate the target and (per the guardrail) made no
+      // edits rather than guessing. Record the failure; never a commit.
+      await finishJob(row.id, {
+        status: 'failed',
+        error: verdict.error,
         ...baseFields,
       });
     } else if (downgradeError || !sha) {

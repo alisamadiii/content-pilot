@@ -11,6 +11,22 @@ export const dynamic = 'force-dynamic';
 const formatDate = (date: Date | null) =>
   date ? date.toISOString().replace('T', ' ').slice(0, 19) : '—';
 
+type PromptSegment = { text: string; value?: boolean };
+
+// The exact input sent to Claude, stored as { text, value? } segments. `value`
+// slices are DB-sourced (the request + element context) → full opacity; the rest
+// is fixed template (the guardrail skill, labels) → dimmed.
+const parsePromptSent = (raw: string | null): PromptSegment[] | null => {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed as PromptSegment[];
+  } catch {
+    // fall through
+  }
+  return null;
+};
+
 const JobDetailPage = async ({
   params,
 }: {
@@ -28,6 +44,8 @@ const JobDetailPage = async ({
   }
 
   const isActive = row.status === 'queued' || row.status === 'running';
+  const isBatchedChild = row.batchId != null && row.batchId !== row.id;
+  const promptSegments = parsePromptSent(row.promptSent);
 
   return (
     <>
@@ -50,6 +68,22 @@ const JobDetailPage = async ({
         </div>
         {row.prompt}
       </div>
+
+      {!isBatchedChild && promptSegments && (
+        <div className="card">
+          <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+            sent to Claude — dimmed text is the fixed template; full-opacity text
+            is what we pulled from the request
+          </div>
+          <pre className="logs" style={{ whiteSpace: 'pre-wrap' }}>
+            {promptSegments.map((seg, i) => (
+              <span key={i} style={seg.value ? undefined : { opacity: 0.5 }}>
+                {seg.text}
+              </span>
+            ))}
+          </pre>
+        </div>
+      )}
 
       {row.resultSummary && (
         <div className="card">

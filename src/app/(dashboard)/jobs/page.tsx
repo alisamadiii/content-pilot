@@ -2,6 +2,7 @@ import { and, desc, eq, gte, ilike, lte, or, sql } from 'drizzle-orm';
 import Link from 'next/link';
 import { db } from '@/db';
 import { job, JOB_STATUS_VALUES, repo, type JobStatus } from '@/db/schema';
+import { repoColor } from '@/lib/repo-color';
 import { AutoRefresh } from '../auto-refresh';
 import { JobActions } from './job-actions';
 
@@ -9,6 +10,24 @@ export const dynamic = 'force-dynamic';
 
 const formatDate = (date: Date | null) =>
   date ? date.toISOString().replace('T', ' ').slice(0, 19) : '—';
+
+// Repo label with a per-repo color dot so rows from the same site are grouped.
+const RepoTag = ({ owner, repo }: { owner: string; repo: string }) => (
+  <>
+    <span
+      style={{
+        display: 'inline-block',
+        width: 8,
+        height: 8,
+        borderRadius: '50%',
+        background: repoColor(owner, repo),
+        marginRight: 6,
+        verticalAlign: 'middle',
+      }}
+    />
+    {owner}/{repo}
+  </>
+);
 
 type Filters = {
   repo?: string;
@@ -200,7 +219,7 @@ const JobsPage = async ({
               <span className="status status-running">●</span>
               <Link href={`/jobs/${key}`}>#{key}</Link>
               <span>
-                {lead.owner}/{lead.repo}
+                <RepoTag owner={lead.owner} repo={lead.repo} />
               </span>
               {count > 1 ? (
                 <span className="muted">
@@ -244,7 +263,7 @@ const JobsPage = async ({
                   <Link href={`/jobs/${row.id}`}>#{row.id}</Link>
                 </td>
                 <td>
-                  {row.owner}/{row.repo}
+                  <RepoTag owner={row.owner} repo={row.repo} />
                 </td>
                 <td className="muted">{row.branch}</td>
                 <td className="prompt-cell" title={row.prompt}>

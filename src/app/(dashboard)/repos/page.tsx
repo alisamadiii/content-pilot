@@ -3,6 +3,7 @@ import { existsSync } from 'fs';
 import { join, resolve } from 'path';
 import { db } from '@/db';
 import { job, repo } from '@/db/schema';
+import { repoColor } from '@/lib/repo-color';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,7 @@ const ReposPage = async () => {
           <thead>
             <tr>
               <th>repo id</th>
+              <th>owner</th>
               <th>repository</th>
               <th>branch</th>
               <th>jobs</th>
@@ -49,7 +51,19 @@ const ReposPage = async () => {
               return (
                 <tr key={row.repoId}>
                   <td className="muted">{row.repoId}</td>
+                  <td>{row.owner}</td>
                   <td>
+                    <span
+                      style={{
+                        display: 'inline-block',
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        background: repoColor(row.owner, row.repo),
+                        marginRight: 6,
+                        verticalAlign: 'middle',
+                      }}
+                    />
                     <a
                       href={`https://github.com/${row.owner}/${row.repo}`}
                       target="_blank"

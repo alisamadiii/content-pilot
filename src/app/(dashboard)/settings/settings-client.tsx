@@ -1,7 +1,11 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { createApiKeyAction, revokeApiKeyAction } from './actions';
+import {
+  createApiKeyAction,
+  deleteApiKeyAction,
+  revokeApiKeyAction,
+} from './actions';
 
 export const CreateKeyForm = () => {
   const [pending, startTransition] = useTransition();
@@ -59,6 +63,31 @@ export const RevokeKeyButton = ({ id }: { id: number }) => {
       <input type="hidden" name="id" value={id} />
       <button className="danger" type="submit" disabled={pending}>
         revoke
+      </button>
+    </form>
+  );
+};
+
+export const DeleteKeyButton = ({ id }: { id: number }) => {
+  const [pending, startTransition] = useTransition();
+  return (
+    <form
+      action={(formData) => {
+        if (
+          !confirm(
+            'Permanently delete this API key? This cannot be undone and any caller still using it will stop working.'
+          )
+        ) {
+          return;
+        }
+        startTransition(async () => {
+          await deleteApiKeyAction(formData);
+        });
+      }}
+    >
+      <input type="hidden" name="id" value={id} />
+      <button className="danger" type="submit" disabled={pending}>
+        delete
       </button>
     </form>
   );

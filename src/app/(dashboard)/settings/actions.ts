@@ -36,3 +36,13 @@ export const revokeApiKeyAction = async (formData: FormData) => {
   }
   revalidatePath('/settings');
 };
+
+// Permanently removes the key row (unlike revoke, which only disables it).
+export const deleteApiKeyAction = async (formData: FormData) => {
+  await requireSession();
+  const id = Number(formData.get('id'));
+  if (Number.isInteger(id)) {
+    await db.delete(apiKey).where(eq(apiKey.id, id));
+  }
+  revalidatePath('/settings');
+};

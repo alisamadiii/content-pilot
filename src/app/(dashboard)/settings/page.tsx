@@ -1,7 +1,11 @@
 import { desc } from 'drizzle-orm';
 import { db } from '@/db';
 import { apiKey } from '@/db/schema';
-import { CreateKeyForm, RevokeKeyButton } from './settings-client';
+import {
+  CreateKeyForm,
+  DeleteKeyButton,
+  RevokeKeyButton,
+} from './settings-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,7 +58,12 @@ const SettingsPage = async () => {
                       <span className="status status-done">active</span>
                     )}
                   </td>
-                  <td>{!key.revokedAt && <RevokeKeyButton id={key.id} />}</td>
+                  <td>
+                    <div className="row">
+                      {!key.revokedAt && <RevokeKeyButton id={key.id} />}
+                      <DeleteKeyButton id={key.id} />
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

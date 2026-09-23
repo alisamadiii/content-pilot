@@ -6,16 +6,18 @@ ALLOWED: text/copy changes in existing components and pages; CMS data in the roo
 
 FORBIDDEN — do NOT attempt, even partially: creating or deleting pages or routes; layout, styling, or structural redesigns; new components or features; editing package.json, lockfiles, configs, CI workflows, or anything in .github/; installing dependencies; running commands.
 
-Evaluate EACH request independently: apply the ones that are allowed, and reject only the ones that are out of scope — one rejected request must never block the others. If a request is out of scope, or you cannot find the content it refers to, make no edits for that request and reject it.
+Evaluate EACH request independently: apply the ones that are allowed — one request must never block the others. If a request is out of scope, make no edits for it and REJECT it. If a request is in scope but you cannot confidently locate the exact content it refers to, make no edits for it and mark it FAILED — never guess, and never edit a different element/section to compensate.
 
-Some requests include a Source like \`project:path/to/File.astro:line\`. The first segment before the colon is the project — look for a top-level directory of that name in the repo and treat the rest as a file path relative to it (fall back to the repo root if no such directory exists). Open that file near the given line, find the element matching the Current text, and edit its content right there. If a Source is given, prefer editing that exact file over searching the whole repo.
+Some requests include a Source like \`project:path/to/File.astro:line\`. The first segment before the colon is the project — look for a top-level directory of that name in the repo and treat the rest as a file path relative to it (fall back to the repo root if no such directory exists). Open that file near the given line, find the element matching the Current text, and edit ONLY that element's content right there. If a Source is given, edit that exact element — do not search the rest of the repo for an alternative. If that file does not exist, or no element there matches the Current text, make NO edits for that request and mark it FAILED with a short error saying what could not be found — do NOT edit a different file, element, or section instead.
 
 Many sites use a CMS contract: _site.json (site-wide data and SEO), _pages.json (per-page content addressed by dotted field paths like home.hero.headline), _collections/*.json (repeatable items). If the requested content lives in these files, edit the JSON value there (keep structure and keys intact) rather than hardcoding text in components. If the repo has a CLAUDE.md or AGENTS.md, follow its content-editing conventions where they do not conflict with these rules.
 
 When you reject a request, the reason is shown directly to the website owner — a non-technical client. Write it warmly and politely, in second person, without technical jargon (no "structural change", "layout system", "repo"). Follow this shape: briefly acknowledge the request, explain in plain words that design changes like redesigns, new sections, or new pages are not something the automatic editor can do, and kindly point them to their developer/admin for it. Example tone: "Thanks for your request! Redesigning a page or adding new sections is something your developer handles personally to keep your site looking its best. Please reach out to them and they will be happy to help. I can still update text, images, and contact details for you anytime."
 
+Use "failed" (not "rejected") when a request was in scope but you could not locate the content — e.g. the Source file was missing or nothing matched the Current text. The error is shown to the website owner, so keep it short and plain (e.g. "I could not find the text you selected on that page — it may have changed. Please try again."). "rejected" is only for out-of-scope requests.
+
 Your VERY LAST line of output must be exactly one JSON array with one entry per request id, nothing after it:
-[{"id":<request id>,"status":"done","summary":"<one sentence describing the change>"},{"id":<request id>,"status":"rejected","reason":"<the polite client-facing message described above>"}]
+[{"id":<request id>,"status":"done","summary":"<one sentence describing the change>"},{"id":<request id>,"status":"rejected","reason":"<the polite client-facing message described above>"},{"id":<request id>,"status":"failed","error":"<short plain message: what could not be found>"}]
 Every request id must appear exactly once.`;
 
 // Paths the AI must never change; any hit reverts the batch's edits.
@@ -44,32 +46,73 @@ export const findForbiddenPaths = (paths: string[]) => {
 
 type Job = typeof job.$inferSelect;
 
-export const buildBatchPrompt = (jobs: Job[]) => {
-  const blocks = jobs.map((row, index) => {
-    const lines = [`Request ${index + 1} (id ${row.id}): ${row.prompt}`];
+/**
+ * A slice of the prompt. `value: true` marks text pulled from the DB (the
+ * client's request and element context); everything else is fixed template.
+ * The dashboard renders template slices dimmed and value slices at full opacity.
+ * Concatenating all `text` of the batch slices reproduces `buildBatchPrompt`.
+ */
+export type PromptSegment = { text: string; value?: boolean };
+
+// The `-p` prompt, as ordered segments. Labels are template; the client's
+// request and each element-context field are DB values.
+const batchSegments = (jobs: Job[]): PromptSegment[] => {
+  const segs: PromptSegment[] = [{ text: 'Client edit request(s):\n\n' }];
+  jobs.forEach((row, index) => {
+    if (index > 0) {
+      segs.push({ text: '\n\n' });
+    }
+    segs.push({ text: `Request ${index + 1} (id ${row.id}): ` });
+    segs.push({ text: row.prompt, value: true });
     if (row.pageUrl) {
-      lines.push(`  Page: ${row.pageUrl}`);
+      segs.push({ text: '\n  Page: ' }, { text: row.pageUrl, value: true });
     }
     if (row.sourceRef) {
-      lines.push(`  Source: ${row.sourceRef}`);
+      segs.push({ text: '\n  Source: ' }, { text: row.sourceRef, value: true });
     }
     if (row.elementText) {
-      lines.push(`  Current text: "${row.elementText}"`);
+      segs.push(
+        { text: '\n  Current text: "' },
+        { text: row.elementText, value: true },
+        { text: '"' }
+      );
     }
     if (row.fieldPath) {
-      lines.push(`  CMS field path: ${row.fieldPath}`);
+      segs.push(
+        { text: '\n  CMS field path: ' },
+        { text: row.fieldPath, value: true }
+      );
     }
     if (row.elementSelector) {
-      lines.push(`  Element selector on that page: ${row.elementSelector}`);
+      segs.push(
+        { text: '\n  Element selector on that page: ' },
+        { text: row.elementSelector, value: true }
+      );
     }
-    return lines.join('\n');
   });
-  return `Client edit request(s):\n\n${blocks.join('\n\n')}`;
+  return segs;
 };
+
+export const buildBatchPrompt = (jobs: Job[]) =>
+  batchSegments(jobs)
+    .map((seg) => seg.text)
+    .join('');
+
+/**
+ * The COMPLETE first input Claude receives — the guardrail skill
+ * (`--append-system-prompt`) followed by the `-p` batch prompt — as segments,
+ * so the dashboard can show exactly what was sent with template/value styling.
+ */
+export const buildPromptSegments = (jobs: Job[]): PromptSegment[] => [
+  { text: GUARDRAIL_PROMPT },
+  { text: '\n\n' },
+  ...batchSegments(jobs),
+];
 
 export type Verdict =
   | { id: number; status: 'done'; summary: string }
-  | { id: number; status: 'rejected'; reason: string };
+  | { id: number; status: 'rejected'; reason: string }
+  | { id: number; status: 'failed'; error: string };
 
 /**
  * The verdicts are the last JSON array line of Claude's result text — one
@@ -111,6 +154,13 @@ export const parseVerdicts = (
         typeof entry.reason === 'string'
       ) {
         verdicts.push({ id: entry.id, status: 'rejected', reason: entry.reason });
+      } else if (
+        entry &&
+        typeof entry.id === 'number' &&
+        entry.status === 'failed' &&
+        typeof entry.error === 'string'
+      ) {
+        verdicts.push({ id: entry.id, status: 'failed', error: entry.error });
       }
     }
     const ids = new Set(verdicts.map((verdict) => verdict.id));

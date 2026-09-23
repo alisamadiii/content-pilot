@@ -125,6 +125,10 @@ export const job = pgTable(
     error: text('error'),
     resultSummary: text('result_summary'),
     commitSha: text('commit_sha'),
+    // Exact input sent to Claude (guardrail skill + assembled batch prompt) as a
+    // JSON array of { text, value? } segments, stored on the batch lead so the
+    // dashboard can render template vs backend-value with different opacity.
+    promptSent: text('prompt_sent'),
     // Claude stdout/stderr, dashboard-only, truncated
     logs: text('logs'),
     // Jobs solved together in one Claude session share the lead job's id;
