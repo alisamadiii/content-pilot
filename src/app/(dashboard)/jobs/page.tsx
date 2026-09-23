@@ -37,10 +37,29 @@ const JobsPage = async () => {
       owner: job.owner,
       repo: job.repo,
       prompt: job.prompt,
+      batchId: job.batchId,
       startedAt: job.startedAt,
     })
     .from(job)
     .where(eq(job.status, 'running'));
+
+  // One Claude session per batch — group running rows by their batch lead.
+  const sessions = new Map<
+    number,
+    { lead: (typeof running)[number]; count: number }
+  >();
+  for (const row of running) {
+    const key = row.batchId ?? row.id;
+    const entry = sessions.get(key);
+    if (!entry) {
+      sessions.set(key, { lead: row, count: 1 });
+    } else {
+      entry.count += 1;
+      if (row.id === key) {
+        entry.lead = row;
+      }
+    }
+  }
 
   return (
     <>
@@ -49,26 +68,32 @@ const JobsPage = async () => {
       <p className="subtitle">last 100 edit requests, newest first</p>
 
       <div className="card">
-        <div style={{ fontWeight: 600, marginBottom: running.length ? 8 : 0 }}>
+        <div style={{ fontWeight: 600, marginBottom: sessions.size ? 8 : 0 }}>
           claude sessions:{' '}
-          <span className={running.length ? 'status status-running' : 'muted'}>
-            {running.length} running
+          <span className={sessions.size ? 'status status-running' : 'muted'}>
+            {sessions.size} running
           </span>
         </div>
-        {running.map((session) => {
-          const elapsed = session.startedAt
-            ? Math.round((Date.now() - session.startedAt.getTime()) / 1000)
+        {[...sessions.entries()].map(([key, { lead, count }]) => {
+          const elapsed = lead.startedAt
+            ? Math.round((Date.now() - lead.startedAt.getTime()) / 1000)
             : 0;
           return (
-            <div key={session.id} className="row" style={{ fontSize: 13 }}>
+            <div key={key} className="row" style={{ fontSize: 13 }}>
               <span className="status status-running">●</span>
-              <Link href={`/jobs/${session.id}`}>#{session.id}</Link>
+              <Link href={`/jobs/${key}`}>#{key}</Link>
               <span>
-                {session.owner}/{session.repo}
+                {lead.owner}/{lead.repo}
               </span>
-              <span className="muted prompt-cell" style={{ maxWidth: 300 }}>
-                {session.prompt}
-              </span>
+              {count > 1 ? (
+                <span className="muted">
+                  solving {count} requests in one session
+                </span>
+              ) : (
+                <span className="muted prompt-cell" style={{ maxWidth: 300 }}>
+                  {lead.prompt}
+                </span>
+              )}
               <span className="muted">{elapsed}s</span>
             </div>
           );
@@ -117,7 +142,9 @@ const JobsPage = async () => {
                   )}
                   {row.batchId != null && row.batchId !== row.id && (
                     <div className="muted" style={{ fontSize: 12 }}>
-                      batch #{row.batchId}
+                      solved in one session with{' '}
+                      <Link href={`/jobs/${row.batchId}`}>#{row.batchId}</Link> —
+                      logs &amp; tokens there
                     </div>
                   )}
                 </td>
@@ -134,6 +161,8 @@ const JobsPage = async () => {
                         <div style={{ fontSize: 11 }}>{row.model}</div>
                       )}
                     </>
+                  ) : row.batchId != null && row.batchId !== row.id ? (
+                    <Link href={`/jobs/${row.batchId}`}>see #{row.batchId}</Link>
                   ) : (
                     '—'
                   )}

@@ -6,6 +6,9 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY . .
+# Build-time placeholders — never connected to; real values come at runtime.
+ENV DATABASE_URL=postgres://placeholder:placeholder@localhost:5432/placeholder
+ENV BETTER_AUTH_SECRET=build-placeholder
 RUN pnpm build
 
 FROM base AS runtime
