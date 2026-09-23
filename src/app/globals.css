@@ -1,0 +1,241 @@
+:root {
+  --bg: #0d1117;
+  --bg-alt: #161b22;
+  --border: #30363d;
+  --fg: #e6edf3;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #d29922;
+  --purple: #bc8cff;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+.shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 200px;
+  border-right: 1px solid var(--border);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.sidebar .brand {
+  font-weight: 700;
+  margin-bottom: 16px;
+  color: var(--fg);
+}
+.sidebar .brand span {
+  color: var(--accent);
+}
+
+.sidebar a {
+  color: var(--muted);
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+.sidebar a:hover,
+.sidebar a.active {
+  color: var(--fg);
+  background: var(--bg-alt);
+  text-decoration: none;
+}
+
+.sidebar .bottom {
+  margin-top: auto;
+}
+
+.main {
+  flex: 1;
+  padding: 24px;
+  min-width: 0;
+}
+
+h1 {
+  font-size: 18px;
+  margin: 0 0 4px;
+}
+.subtitle {
+  color: var(--muted);
+  margin: 0 0 24px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--border);
+}
+th,
+td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+th {
+  background: var(--bg-alt);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+tr:last-child td {
+  border-bottom: none;
+}
+
+.status {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+}
+.status-queued {
+  color: var(--yellow);
+}
+.status-running {
+  color: var(--accent);
+}
+.status-done {
+  color: var(--green);
+}
+.status-rejected {
+  color: var(--purple);
+}
+.status-failed,
+.status-canceled {
+  color: var(--red);
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-alt);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+pre.logs {
+  background: #010409;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  color: var(--muted);
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+input,
+textarea,
+button {
+  font-family: inherit;
+  font-size: 14px;
+}
+input[type='text'],
+input[type='email'],
+input[type='password'],
+textarea {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+input:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+button {
+  background: var(--bg-alt);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--muted);
+}
+button.primary {
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: #fff;
+}
+button.danger {
+  color: var(--red);
+}
+
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.auth-box {
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.error-text {
+  color: var(--red);
+  font-size: 13px;
+}
+.muted {
+  color: var(--muted);
+}
+.mono-key {
+  background: #010409;
+  border: 1px dashed var(--green);
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: var(--green);
+  word-break: break-all;
+}
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.prompt-cell {
+  max-width: 380px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

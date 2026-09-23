@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: content_pilot
+    ports:
+      - '5433:5432'
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    image: ghcr.io/alisamadiillc/content-pilot:latest
+    build: .
+    restart: unless-stopped
+    profiles: ['full']
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/content_pilot
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-me}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3010}
+      GITHUB_PAT: ${GITHUB_PAT}
+      WORKSPACE_DIR: /data/workspace
+      POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-300000}
+      JOB_TIMEOUT_MS: ${JOB_TIMEOUT_MS:-600000}
+    ports:
+      - '3010:3010'
+    volumes:
+      - workspace:/data/workspace
+      - claude-config:/home/nextjs/.claude
+
+volumes:
+  db-data:
+  workspace:
+  claude-config:
