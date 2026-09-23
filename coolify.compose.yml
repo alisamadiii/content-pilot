@@ -1,0 +1,41 @@
+services:
+  content-pilot:
+    image: ghcr.io/alisamadiii/content-pilot:latest
+    environment:
+      - SERVICE_FQDN_CONTENTPILOT_3010
+      - DATABASE_URL=postgres://postgres:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/content_pilot
+      - BETTER_AUTH_SECRET=${SERVICE_BASE64_64_AUTHSECRET}
+      - BETTER_AUTH_URL=${SERVICE_FQDN_CONTENTPILOT_3010}
+      - GITHUB_PAT=${GITHUB_PAT}
+      - WORKSPACE_DIR=/data/workspace
+      - POLL_INTERVAL_MS=300000
+      - JOB_TIMEOUT_MS=600000
+      - CLAUDE_MODEL=haiku
+      - GIT_AUTHOR_NAME=AI Edit Bot
+      - GIT_AUTHOR_EMAIL=ai-edits@alisamadii.com
+    volumes:
+      - cp-workspace:/data/workspace
+      - cp-claude:/home/nextjs/.claude
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3010/api/health || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_POSTGRES}
+      - POSTGRES_DB=content_pilot
+    volumes:
+      - cp-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10

@@ -5,6 +5,26 @@ import { count } from 'drizzle-orm';
 import { db } from '@/db';
 import * as schema from '@/db/schema';
 
+// Some hosts (e.g. Coolify's SERVICE_FQDN_*_<port> magic var) inject the URL as
+// "host:port" without a scheme, which better-auth rejects. Normalize it.
+const normalizeBaseURL = (raw: string | undefined) => {
+  if (!raw) return undefined;
+  let url = raw.trim();
+  if (!/^https?:\/\//.test(url)) {
+    url = `https://${url}`;
+  }
+  // Drop an explicit :port on a public https URL (behind a 443 proxy).
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'https:' && parsed.port) {
+      parsed.port = '';
+    }
+    return parsed.origin;
+  } catch {
+    return url;
+  }
+};
+
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
     provider: 'pg',
@@ -16,7 +36,7 @@ export const auth = betterAuth({
     },
   }),
   secret: process.env.BETTER_AUTH_SECRET,
-  baseURL: process.env.BETTER_AUTH_URL,
+  baseURL: normalizeBaseURL(process.env.BETTER_AUTH_URL),
   emailAndPassword: {
     enabled: true,
   },
