@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { db } from '@/db';
 import { job, JOB_STATUS_VALUES, repo, type JobStatus } from '@/db/schema';
 import { AutoRefresh } from '../auto-refresh';
+import { JobActions } from './job-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -231,6 +232,7 @@ const JobsPage = async ({
               <th>tokens</th>
               <th>created</th>
               <th>finished</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -284,6 +286,9 @@ const JobsPage = async ({
                 </td>
                 <td className="muted">{formatDate(row.createdAt)}</td>
                 <td className="muted">{formatDate(row.finishedAt)}</td>
+                <td>
+                  <JobActions id={row.id} status={row.status} />
+                </td>
               </tr>
             ))}
           </tbody>

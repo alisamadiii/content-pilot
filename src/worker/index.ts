@@ -1,7 +1,7 @@
 import { execFile } from 'child_process';
 import { eq, inArray } from 'drizzle-orm';
 import { promisify } from 'util';
-import { db } from '@/db';
+import { client, db } from '@/db';
 import { job, type JobStatus } from '@/db/schema';
 import { claimBatch, recoverStaleJobs } from './claim';
 import { config, ensureWorkspace } from './config';
@@ -219,7 +219,21 @@ const tick = async () => {
   return true;
 };
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+// Interruptible sleep: a NOTIFY on cp_run_now (from the dashboard's "run now" /
+// "retry" buttons) wakes the worker immediately instead of waiting the full poll.
+let wake: (() => void) | null = null;
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      wake = null;
+      resolve();
+    }, ms);
+    wake = () => {
+      clearTimeout(timer);
+      wake = null;
+      resolve();
+    };
+  });
 
 const main = async () => {
   ensureWorkspace();
@@ -235,6 +249,11 @@ const main = async () => {
   if (recovered) {
     log(`recovered ${recovered} stale running job(s)`);
   }
+
+  // Wake immediately when the dashboard triggers a run-now / retry.
+  await client.listen('cp_run_now', () => {
+    if (wake) wake();
+  });
 
   log(
     `worker started — model ${config.claudeModel}, polling every ${config.pollIntervalMs / 1000}s, batch limit ${config.batchLimit}, workspace ${config.workspaceDir}`
