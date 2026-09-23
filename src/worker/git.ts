@@ -51,7 +51,28 @@ export const git = async (cwd: string, args: string[], withAuth = false) => {
 
 export const repoDir = (repoId: number) => join(config.workspaceDir, String(repoId));
 
-/** Clones the repo if missing, otherwise resets it hard to origin/<branch>. */
+/** The repo's default branch (origin/HEAD), falling back to "main". */
+const defaultBranch = async (dir: string) => {
+  try {
+    // Best-effort: make sure origin/HEAD points at the remote's default.
+    await git(dir, ['remote', 'set-head', 'origin', '-a'], true).catch(() => '');
+    const ref = await git(dir, [
+      'symbolic-ref',
+      '--short',
+      'refs/remotes/origin/HEAD',
+    ]);
+    return ref.replace(/^origin\//, '').trim() || 'main';
+  } catch {
+    return 'main';
+  }
+};
+
+/**
+ * Clones the repo if missing, then puts it on `params.branch`:
+ *  - if that branch exists on the remote, reset hard to it;
+ *  - if it does not, create it fresh from the repo's default branch.
+ * Either way the working tree is clean and on the target branch.
+ */
 export const syncRepo = async (params: {
   repoId: number;
   owner: string;
@@ -62,14 +83,31 @@ export const syncRepo = async (params: {
   const url = `https://github.com/${params.owner}/${params.repo}.git`;
 
   if (!existsSync(join(dir, '.git'))) {
-    await git(config.workspaceDir, ['clone', '--branch', params.branch, url, dir], true);
-    return dir;
+    // Clone the default branch (always exists); the target is handled below.
+    await git(config.workspaceDir, ['clone', url, dir], true);
+  } else {
+    await git(dir, ['remote', 'set-url', 'origin', url]);
   }
 
-  await git(dir, ['remote', 'set-url', 'origin', url]);
-  await git(dir, ['fetch', 'origin', params.branch], true);
-  await git(dir, ['checkout', params.branch]);
-  await git(dir, ['reset', '--hard', `origin/${params.branch}`]);
+  await git(dir, ['fetch', 'origin', '--prune'], true);
+
+  const remoteHead = await git(
+    dir,
+    ['ls-remote', '--heads', 'origin', params.branch],
+    true
+  );
+
+  if (remoteHead.trim()) {
+    // Branch exists remotely — check it out and reset to it.
+    await git(dir, ['checkout', '-B', params.branch, `origin/${params.branch}`]);
+    await git(dir, ['reset', '--hard', `origin/${params.branch}`]);
+  } else {
+    // New branch — base it on the repo's default branch.
+    const base = await defaultBranch(dir);
+    await git(dir, ['checkout', '-B', base, `origin/${base}`]);
+    await git(dir, ['reset', '--hard', `origin/${base}`]);
+    await git(dir, ['checkout', '-B', params.branch]);
+  }
   await git(dir, ['clean', '-fd']);
   return dir;
 };
@@ -101,11 +139,18 @@ export const commitAndPush = async (params: {
   await git(params.dir, ['add', '-A']);
   await git(params.dir, [...identity, 'commit', '-m', params.message]);
   try {
-    await git(params.dir, ['push', 'origin', params.branch], true);
-  } catch {
-    // Remote moved between sync and push — rebase once and retry.
+    await git(params.dir, ['push', '-u', 'origin', params.branch], true);
+  } catch (error) {
+    // Only a branch that already exists remotely can have moved under us —
+    // rebase once and retry. For a brand-new branch, rethrow the real error.
+    const remoteHead = await git(
+      params.dir,
+      ['ls-remote', '--heads', 'origin', params.branch],
+      true
+    );
+    if (!remoteHead.trim()) throw error;
     await git(params.dir, [...identity, 'pull', '--rebase', 'origin', params.branch], true);
-    await git(params.dir, ['push', 'origin', params.branch], true);
+    await git(params.dir, ['push', '-u', 'origin', params.branch], true);
   }
   return git(params.dir, ['rev-parse', 'HEAD']);
 };
