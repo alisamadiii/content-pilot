@@ -25,7 +25,7 @@ COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Worker + schema sources (run with tsx, no build step)
 COPY --from=build --chown=nextjs:nodejs /app/src ./src
 COPY --from=build --chown=nextjs:nodejs /app/scripts ./scripts
-COPY --from=build --chown=nextjs:nodejs /app/drizzle.config.ts ./
+COPY --from=build --chown=nextjs:nodejs /app/drizzle.config.ts /app/tsconfig.json ./
 COPY --from=build --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --chown=nextjs:nodejs docker/entrypoint.sh ./docker/entrypoint.sh
 RUN chmod +x ./docker/entrypoint.sh
