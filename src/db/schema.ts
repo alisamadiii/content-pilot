@@ -88,6 +88,56 @@ export const repo = pgTable('repo', {
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
+// ---------------------------------------------------------------------------
+// Outbound webhooks: notify downstream apps when a job reaches a terminal state.
+// ---------------------------------------------------------------------------
+
+export const WEBHOOK_EVENT_VALUES = ['done', 'rejected', 'failed'] as const;
+export type WebhookEvent = (typeof WEBHOOK_EVENT_VALUES)[number];
+
+export const webhook = pgTable('webhook', {
+  id: serial('id').primaryKey(),
+  name: text('name').notNull(),
+  url: text('url').notNull(),
+  // Signing secret (whsec_…). Stored recoverably — unlike api_key.keyHash — because
+  // the worker must recompute the HMAC on every send.
+  secret: text('secret').notNull(),
+  // null = all repos; otherwise the GitHub repo id (matches job.repoId).
+  repoId: integer('repo_id'),
+  // JSON array of WebhookEvent this webhook fires on (like promptSent's JSON convention).
+  events: text('events').notNull(),
+  enabled: boolean('enabled').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+export const webhookDelivery = pgTable(
+  'webhook_delivery',
+  {
+    id: serial('id').primaryKey(),
+    webhookId: integer('webhook_id').notNull(),
+    jobId: integer('job_id'),
+    repoId: integer('repo_id'),
+    // The job status that fired this delivery.
+    event: text('event').notNull(),
+    url: text('url').notNull(),
+    requestBody: text('request_body'),
+    responseStatus: integer('response_status'),
+    // Truncated response body for debugging.
+    responseBody: text('response_body'),
+    // Network/timeout error, when the request never got a response.
+    error: text('error'),
+    durationMs: integer('duration_ms'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_webhook_delivery_webhook_created').on(
+      table.webhookId,
+      table.createdAt
+    ),
+  ]
+);
+
 export const JOB_STATUS_VALUES = [
   'queued',
   'running',

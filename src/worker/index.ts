@@ -1,5 +1,5 @@
 import { execFile } from 'child_process';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { promisify } from 'util';
 import { client, db } from '@/db';
 import { job, type JobStatus } from '@/db/schema';
@@ -20,6 +20,7 @@ import {
   type Verdict,
 } from './guardrails';
 import { runClaude, type ClaudeRun } from './runner';
+import { dispatchJobWebhooks } from './webhooks';
 
 const execFileAsync = promisify(execFile);
 
@@ -47,6 +48,12 @@ const finishJob = async (
     .update(job)
     .set({ ...fields, finishedAt: new Date(), updatedAt: new Date() })
     .where(eq(job.id, id));
+  // Fire webhooks for the terminal transition. Re-read so the payload carries
+  // the full, fresh row (owner/repo/repoId/error/…). Best-effort; never throws.
+  const [full] = await db.select().from(job).where(eq(job.id, id));
+  if (full) {
+    await dispatchJobWebhooks(full);
+  }
 };
 
 /** Fails every job in the batch with the same client-facing message. */
@@ -221,20 +228,13 @@ const tick = async () => {
     } catch {
       // clone may not exist; nothing to discard
     }
-    await db
-      .update(job)
-      .set({
+    // Per-row (not one bulk update) so each crashed job fires its webhook.
+    for (const row of jobs) {
+      await finishJob(row.id, {
         status: 'failed',
         error: `The edit could not be completed: ${message.slice(0, 500)}`,
-        finishedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(
-        inArray(
-          job.id,
-          jobs.map((row) => row.id)
-        )
-      );
+      });
+    }
   }
   return true;
 };
@@ -266,8 +266,14 @@ const main = async () => {
   });
 
   const recovered = await recoverStaleJobs();
-  if (recovered) {
-    log(`recovered ${recovered} stale running job(s)`);
+  if (recovered.length) {
+    log(`recovered ${recovered.length} stale running job(s)`);
+    for (const id of recovered) {
+      const [full] = await db.select().from(job).where(eq(job.id, id));
+      if (full) {
+        await dispatchJobWebhooks(full);
+      }
+    }
   }
 
   // Wake immediately when the dashboard triggers a run-now / retry.

@@ -64,8 +64,11 @@ export const claimBatch = async (): Promise<Job[]> => {
   });
 };
 
-/** Fails jobs stuck in 'running' from a previous crashed worker. */
-export const recoverStaleJobs = async () => {
+/**
+ * Fails jobs stuck in 'running' from a previous crashed worker.
+ * Returns the recovered job ids so the caller can fire their webhooks.
+ */
+export const recoverStaleJobs = async (): Promise<number[]> => {
   const rows = await db.execute(sql`
     UPDATE job
     SET status = 'failed',
@@ -75,5 +78,5 @@ export const recoverStaleJobs = async () => {
       AND started_at < now() - make_interval(mins => ${config.staleRunningMinutes})
     RETURNING id
   `);
-  return rows.length;
+  return (rows as unknown as { id: number }[]).map((row) => row.id);
 };
