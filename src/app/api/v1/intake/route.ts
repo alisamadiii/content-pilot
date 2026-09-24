@@ -17,10 +17,13 @@ const MAX_QUEUED_PER_REPO = 5;
 const intakeSchema = z.object({
   repoId: z.number().int().positive(),
   branch: z.string().trim().min(1).max(200).optional(),
-  prompt: z.string().trim().min(10).max(4000),
+  prompt: z.string().trim().min(4).max(4000),
   sourceRef: z.string().trim().max(500).optional(),
   elementText: z.string().trim().max(2000).optional(),
   pageUrl: z.string().trim().max(1000).optional(),
+  // Reference images pasted as CDN links in the overlay's page-level chat.
+  // Folded into the stored prompt so the worker + job table stay unchanged.
+  imageUrls: z.array(z.string().trim().url().max(1000)).max(10).optional(),
 });
 
 const bearer = (request: Request) => {
@@ -128,7 +131,11 @@ export const POST = async (request: Request) => {
       owner: resolved.owner,
       repo: resolved.repo,
       branch,
-      prompt: input.prompt,
+      prompt: input.imageUrls?.length
+        ? `${input.prompt}\n\nAttached images (CDN URLs):\n${input.imageUrls
+            .map((url) => `- ${url}`)
+            .join("\n")}`
+        : input.prompt,
       requestedBy: "website visitor",
       sourceRef: input.sourceRef,
       elementText: input.elementText,
