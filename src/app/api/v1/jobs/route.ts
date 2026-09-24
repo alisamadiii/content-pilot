@@ -3,13 +3,12 @@ import { z } from 'zod';
 import { db } from '@/db';
 import { job, repo } from '@/db/schema';
 import { verifyApiKey } from '@/lib/api-key';
+import { resolveRepo } from '@/lib/resolve-repo';
 
 const MAX_QUEUED_PER_REPO = 5;
 
 const createJobSchema = z.object({
   repoId: z.number().int().positive(),
-  owner: z.string().trim().min(1).max(200),
-  repo: z.string().trim().min(1).max(200),
   branch: z.string().trim().min(1).max(200).optional(),
   prompt: z.string().trim().min(10).max(4000),
   requesterId: z.string().trim().max(200).optional(),
@@ -75,19 +74,27 @@ export const POST = async (request: Request) => {
 
   const branch = input.branch || 'main';
 
+  const resolved = await resolveRepo(input.repoId);
+  if (!resolved) {
+    return Response.json(
+      { error: 'Unknown repository — could not resolve owner/repo from repoId.' },
+      { status: 422 }
+    );
+  }
+
   await db
     .insert(repo)
     .values({
       repoId: input.repoId,
-      owner: input.owner,
-      repo: input.repo,
+      owner: resolved.owner,
+      repo: resolved.repo,
       branch,
     })
     .onConflictDoUpdate({
       target: repo.repoId,
       set: {
-        owner: input.owner,
-        repo: input.repo,
+        owner: resolved.owner,
+        repo: resolved.repo,
         branch,
         updatedAt: new Date(),
       },
@@ -97,8 +104,8 @@ export const POST = async (request: Request) => {
     .insert(job)
     .values({
       repoId: input.repoId,
-      owner: input.owner,
-      repo: input.repo,
+      owner: resolved.owner,
+      repo: resolved.repo,
       branch,
       prompt: input.prompt,
       requesterId: input.requesterId,

@@ -7,13 +7,11 @@ import { createHmac, timingSafeEqual } from 'crypto';
  * long-lived content-pilot API key never reaches the browser.
  *
  * Format (must match the hub): `base64url(payload).base64url(hmacSHA256(body))`,
- * payload = { repoId, owner, repo, exp }. Signed with the shared
- * EDIT_TOKEN_SECRET. Returns the payload when valid + unexpired, else null.
+ * payload = { repoId, exp }. Signed with the shared EDIT_TOKEN_SECRET.
+ * Returns the payload when valid + unexpired, else null.
  */
 export interface EditTokenPayload {
   repoId: number;
-  owner: string;
-  repo: string;
   exp: number;
 }
 

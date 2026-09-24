@@ -4,6 +4,7 @@ import { client, db } from "@/db";
 import { job, repo } from "@/db/schema";
 import { verifyApiKey } from "@/lib/api-key";
 import { verifyEditToken } from "@/lib/edit-token";
+import { resolveRepo } from "@/lib/resolve-repo";
 
 // Mirrors jobs/route.ts — the same abuse guard applies to the intake.
 const MAX_QUEUED_PER_REPO = 5;
@@ -11,12 +12,10 @@ const MAX_QUEUED_PER_REPO = 5;
 // Public intake for the cms-bridge overlay. Auth = a bearer token the hub
 // injects into the edit-mode iframe URL (never baked into the site bundle).
 // The token is a normal API key created in Settings; the browser sends it as
-// `Authorization: Bearer <token>`. Repo identity comes from the site's build
-// config and is trusted because the request is authenticated.
+// `Authorization: Bearer <token>`. Repo identity is the repoId alone — the
+// owner/repo slug is resolved server-side (repo table, then GitHub by id).
 const intakeSchema = z.object({
   repoId: z.number().int().positive(),
-  owner: z.string().trim().min(1).max(200),
-  repo: z.string().trim().min(1).max(200),
   branch: z.string().trim().min(1).max(200).optional(),
   prompt: z.string().trim().min(10).max(4000),
   sourceRef: z.string().trim().max(500).optional(),
@@ -95,20 +94,28 @@ export const POST = async (request: Request) => {
     );
   }
 
+  const resolved = await resolveRepo(input.repoId);
+  if (!resolved) {
+    return Response.json(
+      { error: "Unknown repository — could not resolve owner/repo from repoId." },
+      { status: 422, headers },
+    );
+  }
+
   // Register/refresh the repo (trusted — the request is authenticated).
   await db
     .insert(repo)
     .values({
       repoId: input.repoId,
-      owner: input.owner,
-      repo: input.repo,
+      owner: resolved.owner,
+      repo: resolved.repo,
       branch,
     })
     .onConflictDoUpdate({
       target: repo.repoId,
       set: {
-        owner: input.owner,
-        repo: input.repo,
+        owner: resolved.owner,
+        repo: resolved.repo,
         branch,
         updatedAt: new Date(),
       },
@@ -118,8 +125,8 @@ export const POST = async (request: Request) => {
     .insert(job)
     .values({
       repoId: input.repoId,
-      owner: input.owner,
-      repo: input.repo,
+      owner: resolved.owner,
+      repo: resolved.repo,
       branch,
       prompt: input.prompt,
       requestedBy: "website visitor",
