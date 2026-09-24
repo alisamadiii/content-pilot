@@ -171,6 +171,9 @@ export const job = pgTable(
     sourceRef: text('source_ref'),
     elementText: text('element_text'),
     status: text('status').$type<JobStatus>().notNull().default('queued'),
+    // Admin-triggered rerun with guardrails off (dashboard "retry without
+    // limits" on a rejected job). Never settable through the public API.
+    unrestricted: boolean('unrestricted').notNull().default(false),
     // Client-facing error / rejection reason
     error: text('error'),
     resultSummary: text('result_summary'),

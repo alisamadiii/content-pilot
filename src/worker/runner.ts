@@ -1,6 +1,6 @@
 import { spawn } from 'child_process';
 import { config } from './config';
-import { GUARDRAIL_PROMPT } from './guardrails';
+import { GUARDRAIL_PROMPT, UNRESTRICTED_PROMPT } from './guardrails';
 
 export type ClaudeUsage = {
   model: string | null;
@@ -26,6 +26,8 @@ export type ClaudeRun = {
 export const runClaude = (params: {
   cwd: string;
   prompt: string;
+  /** Admin-approved rerun — swaps the guardrail prompt for the open one. */
+  unrestricted?: boolean;
   onLog?: (logs: string) => void;
 }): Promise<ClaudeRun> => {
   return new Promise((resolve) => {
@@ -35,7 +37,7 @@ export const runClaude = (params: {
       '--model',
       config.claudeModel,
       '--append-system-prompt',
-      GUARDRAIL_PROMPT,
+      params.unrestricted ? UNRESTRICTED_PROMPT : GUARDRAIL_PROMPT,
       '--allowedTools',
       'Read,Edit,Write,Glob,Grep',
       // stream-json emits one JSON event per line as Claude works, which

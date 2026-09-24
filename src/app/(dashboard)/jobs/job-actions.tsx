@@ -2,7 +2,7 @@
 
 import { useTransition } from 'react';
 import type { JobStatus } from '@/db/schema';
-import { retryJob, runJobNow } from './actions';
+import { retryJob, retryJobUnrestricted, runJobNow } from './actions';
 
 export const JobActions = ({
   id,
@@ -27,13 +27,25 @@ export const JobActions = ({
 
   if (status === 'failed' || status === 'rejected' || status === 'canceled') {
     return (
-      <button
-        type="button"
-        disabled={pending}
-        onClick={() => startTransition(() => retryJob(id))}
-      >
-        {pending ? '...' : 'retry'}
-      </button>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => startTransition(() => retryJob(id))}
+        >
+          {pending ? '...' : 'retry'}
+        </button>
+        {status === 'rejected' && (
+          <button
+            type="button"
+            disabled={pending}
+            title="Re-run this job with the guardrails off — the request will be allowed even though it's outside the normal content-only scope."
+            onClick={() => startTransition(() => retryJobUnrestricted(id))}
+          >
+            {pending ? '...' : 'retry without limits'}
+          </button>
+        )}
+      </div>
     );
   }
 

@@ -53,6 +53,41 @@ export const retryJob = async (id: number) => {
   revalidatePath('/jobs');
 };
 
+/**
+ * Re-queue a guardrail-rejected job with the guardrails OFF. Admin-only by
+ * construction — the dashboard is single-admin (sign-up is blocked after the
+ * first user), so a session is the admin. Only `rejected` jobs qualify:
+ * that status specifically means the guardrail refused, which is exactly the
+ * case the admin may want to overrule.
+ */
+export const retryJobUnrestricted = async (id: number) => {
+  await requireSession();
+  const updated = await db
+    .update(job)
+    .set({
+      status: 'queued',
+      unrestricted: true,
+      error: null,
+      resultSummary: null,
+      commitSha: null,
+      logs: null,
+      batchId: null,
+      model: null,
+      inputTokens: null,
+      outputTokens: null,
+      costUsd: null,
+      startedAt: null,
+      finishedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(job.id, id), eq(job.status, 'rejected')))
+    .returning({ id: job.id });
+  if (updated.length) {
+    await wakeWorker();
+  }
+  revalidatePath('/jobs');
+};
+
 /** Run a queued job now — wakes the worker so it doesn't wait for the poll. */
 export const runJobNow = async (id: number) => {
   await requireSession();

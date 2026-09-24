@@ -105,6 +105,7 @@ const JobsPage = async ({
       prompt: job.prompt,
       requestedBy: job.requestedBy,
       status: job.status,
+      unrestricted: job.unrestricted,
       error: job.error,
       batchId: job.batchId,
       createdAt: job.createdAt,
@@ -274,6 +275,15 @@ const JobsPage = async ({
                   <span className={`status status-${row.status}`}>
                     {row.status}
                   </span>
+                  {row.unrestricted && (
+                    <span
+                      className="muted"
+                      style={{ fontSize: 11, marginLeft: 6 }}
+                      title="Admin rerun with guardrails off"
+                    >
+                      unrestricted
+                    </span>
+                  )}
                   {row.error && (
                     <div className="muted" style={{ fontSize: 12, maxWidth: 240 }}>
                       {row.error.slice(0, 120)}

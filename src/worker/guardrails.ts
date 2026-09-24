@@ -20,7 +20,21 @@ Your VERY LAST line of output must be exactly one JSON array with one entry per 
 [{"id":<request id>,"status":"done","summary":"<one sentence describing the change>"},{"id":<request id>,"status":"rejected","reason":"<the polite client-facing message described above>"},{"id":<request id>,"status":"failed","error":"<short plain message: what could not be found>"}]
 Every request id must appear exactly once.`;
 
-// Paths the AI must never change; any hit reverts the batch's edits.
+// Admin-approved rerun ("retry without limits" on a rejected job): the
+// content-only scoping is lifted, but the verdict-JSON contract stays — the
+// pipeline parses it regardless of mode.
+export const UNRESTRICTED_PROMPT = `You are an automated site editor for a client website. The site owner's developer reviewed and APPROVED the numbered request(s) below, so structural work is allowed: creating pages, adding sections or components, changing layout or styling, and editing configs where needed. Do not install dependencies or run commands. Never touch .env files or other secrets.
+
+Evaluate EACH request independently — one request must never block the others. If you cannot confidently do a request, make no edits for it and mark it FAILED with a short plain-language error; never guess.
+
+Some requests include a Source like \`project:path/to/File.astro:line\`. The first segment before the colon is the project — look for a top-level directory of that name in the repo and treat the rest as a file path relative to it (fall back to the repo root if no such directory exists). Many sites use a CMS contract: _site.json, _pages.json, _collections/*.json — prefer editing those JSON values when the content lives there. If the repo has a CLAUDE.md or AGENTS.md, follow its conventions.
+
+Your VERY LAST line of output must be exactly one JSON array with one entry per request id, nothing after it:
+[{"id":<request id>,"status":"done","summary":"<one sentence describing the change>"},{"id":<request id>,"status":"failed","error":"<short plain message>"}]
+Every request id must appear exactly once.`;
+
+// Paths the AI must never change under the normal guardrails; any hit reverts
+// the batch's edits.
 const DENYLIST_PATTERNS: RegExp[] = [
   /^package\.json$/,
   /(^|\/)package\.json$/,
@@ -34,13 +48,21 @@ const DENYLIST_PATTERNS: RegExp[] = [
   /^docker-compose/i,
   /(^|\/)CLAUDE\.md$/i,
   /(^|\/)AGENTS\.md$/i,
-  /^\.env/,
-  /(^|\/)\.env/,
 ];
 
-export const findForbiddenPaths = (paths: string[]) => {
+// The safety floor: forbidden in EVERY mode, including admin-approved
+// unrestricted reruns — secrets never get committed by the bot.
+const SECRET_PATTERNS: RegExp[] = [/^\.env/, /(^|\/)\.env/];
+
+export const findForbiddenPaths = (
+  paths: string[],
+  { unrestricted = false }: { unrestricted?: boolean } = {}
+) => {
+  const patterns = unrestricted
+    ? SECRET_PATTERNS
+    : [...DENYLIST_PATTERNS, ...SECRET_PATTERNS];
   return paths.filter((path) =>
-    DENYLIST_PATTERNS.some((pattern) => pattern.test(path))
+    patterns.some((pattern) => pattern.test(path))
   );
 };
 
@@ -104,7 +126,7 @@ export const buildBatchPrompt = (jobs: Job[]) =>
  * so the dashboard can show exactly what was sent with template/value styling.
  */
 export const buildPromptSegments = (jobs: Job[]): PromptSegment[] => [
-  { text: GUARDRAIL_PROMPT },
+  { text: jobs[0]?.unrestricted ? UNRESTRICTED_PROMPT : GUARDRAIL_PROMPT },
   { text: '\n\n' },
   ...batchSegments(jobs),
 ];

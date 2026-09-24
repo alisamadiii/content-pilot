@@ -94,6 +94,9 @@ const processBatch = async (jobs: Job[]) => {
   const run = await runClaude({
     cwd: dir,
     prompt: buildBatchPrompt(jobs),
+    // Batches are claimed mode-pure (see claimBatch), so the lead's flag
+    // speaks for the whole batch.
+    unrestricted: lead.unrestricted,
     onLog: (logs) => {
       void db
         .update(job)
@@ -139,7 +142,11 @@ const processBatch = async (jobs: Job[]) => {
     .map((verdict) => verdict.id);
 
   const changed = doneIds.length ? await changedFiles(dir) : [];
-  const forbidden = findForbiddenPaths(changed);
+  // Unrestricted (admin-approved) batches skip the structural denylist but
+  // keep the secrets floor — .env and friends never get committed.
+  const forbidden = findForbiddenPaths(changed, {
+    unrestricted: lead.unrestricted,
+  });
 
   // done-verdicts but nothing/forbidden on disk → downgrade those rows.
   let downgradeError: string | null = null;

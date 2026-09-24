@@ -14,23 +14,29 @@ type Job = typeof job.$inferSelect;
 export const claimBatch = async (): Promise<Job[]> => {
   return db.transaction(async (tx) => {
     const target = await tx.execute(sql`
-      SELECT repo_id AS "repoId" FROM job
+      SELECT repo_id AS "repoId", unrestricted FROM job
       WHERE status = 'queued'
         AND repo_id NOT IN (SELECT repo_id FROM job WHERE status = 'running')
       ORDER BY created_at
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     `);
-    const repoId = (target[0] as { repoId: number } | undefined)?.repoId;
-    if (!repoId) {
+    const lead = target[0] as
+      | { repoId: number; unrestricted: boolean }
+      | undefined;
+    if (!lead) {
       return [];
     }
 
+    // The whole batch shares one Claude session and one system prompt, so a
+    // batch must be all-guardrailed or all-unrestricted — never mixed. Jobs
+    // with the other flag stay queued for a later batch.
     const rows = await tx.execute(sql`
       UPDATE job SET status = 'running', started_at = now(), updated_at = now()
       WHERE id IN (
         SELECT id FROM job
-        WHERE repo_id = ${repoId} AND status = 'queued'
+        WHERE repo_id = ${lead.repoId} AND status = 'queued'
+          AND unrestricted = ${lead.unrestricted}
         ORDER BY created_at
         FOR UPDATE SKIP LOCKED
         LIMIT ${config.batchLimit}
@@ -41,7 +47,7 @@ export const claimBatch = async (): Promise<Job[]> => {
         field_path AS "fieldPath", page_url AS "pageUrl",
         element_selector AS "elementSelector",
         source_ref AS "sourceRef", element_text AS "elementText",
-        status, error, result_summary AS "resultSummary",
+        status, unrestricted, error, result_summary AS "resultSummary",
         commit_sha AS "commitSha", logs, batch_id AS "batchId",
         input_tokens AS "inputTokens", output_tokens AS "outputTokens",
         cost_usd AS "costUsd",
