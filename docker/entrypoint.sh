@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+echo "[entrypoint] preparing database (drop schema-removed tables)..."
+node_modules/.bin/tsx scripts/db-prepare.ts
+
 echo "[entrypoint] syncing database schema..."
 node_modules/.bin/drizzle-kit push --force
 
