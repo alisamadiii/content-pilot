@@ -170,7 +170,7 @@ const processMessage = async (row: MessageRow) => {
     const prompt = row.context
       ? `${row.context}\n\n---\n\n${row.content}`
       : row.content;
-    const run = await runSessionClaude({
+    let run = await runSessionClaude({
       cwd: session.dir,
       prompt,
       claudeSessionId: sessionRow.claudeSessionId,
@@ -178,6 +178,28 @@ const processMessage = async (row: MessageRow) => {
         pending.push(event);
       },
     });
+
+    // A --resume target can vanish (container recreated, CLI state pruned) —
+    // retry once without it; conversational context is lost but the request
+    // still runs.
+    if (
+      !run.timedOut &&
+      run.exitCode !== 0 &&
+      sessionRow.claudeSessionId &&
+      /no conversation found|session.*not found/i.test(run.stderr)
+    ) {
+      log(
+        `session ${row.sessionId}: stale claude session ${sessionRow.claudeSessionId} — retrying fresh`
+      );
+      run = await runSessionClaude({
+        cwd: session.dir,
+        prompt,
+        claudeSessionId: null,
+        onEvent: (event) => {
+          pending.push(event);
+        },
+      });
+    }
 
     // Accumulated across the initial run and any self-repair runs below.
     let usage = { ...run.usage };
@@ -194,6 +216,11 @@ const processMessage = async (row: MessageRow) => {
     };
 
     if (run.timedOut || run.exitCode !== 0) {
+      log(
+        `session ${row.sessionId}: message #${row.id} claude ${
+          run.timedOut ? 'timed out' : `exited ${run.exitCode}`
+        } — ${sanitize(run.stderr).slice(0, 300) || '(no stderr)'}`
+      );
       await persistClaudeSessionId();
       // Invariant: between messages the working tree equals the branch, so the
       // preview never shows edits that publish would not ship.

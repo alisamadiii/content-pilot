@@ -10,6 +10,8 @@ export type SessionClaudeRun = {
   timedOut: boolean;
   exitCode: number;
   usage: ClaudeUsage;
+  /** Tail of stderr — only meaningful when exitCode !== 0. */
+  stderr: string;
 };
 
 /**
@@ -111,11 +113,14 @@ export const runSessionClaude = (params: {
       buffer = lines.pop() ?? '';
       for (const line of lines) handleLine(line);
     });
-    child.stderr.on('data', () => {
-      // stderr is progress noise in stream-json mode; errors surface via exit code
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      // Mostly progress noise in stream-json mode, but on a non-zero exit the
+      // tail is the only clue (auth failures, bad --resume target, ...).
+      stderr = (stderr + chunk.toString()).slice(-2000);
     });
 
-    child.on('error', () => {
+    child.on('error', (error) => {
       clearTimeout(timer);
       resolve({
         resultText: '',
@@ -123,6 +128,7 @@ export const runSessionClaude = (params: {
         timedOut: false,
         exitCode: 1,
         usage,
+        stderr: error.message,
       });
     });
 
@@ -135,6 +141,7 @@ export const runSessionClaude = (params: {
         timedOut,
         exitCode: code ?? 1,
         usage,
+        stderr,
       });
     });
   });
