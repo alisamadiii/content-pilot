@@ -1,11 +1,12 @@
 import { spawn, type ChildProcess } from 'child_process';
-import { eq } from 'drizzle-orm';
-import { existsSync, readFileSync, readdirSync } from 'fs';
+import { eq, sql } from 'drizzle-orm';
+import { existsSync, readFileSync } from 'fs';
 import { rm } from 'fs/promises';
 import { createServer } from 'net';
 import { join } from 'path';
 import { db } from '@/db';
 import { previewEvent, previewSession, type PreviewSessionStatus } from '@/db/schema';
+import { getAppDir } from '@/lib/settings';
 import { discardChanges, sanitize, syncRepo } from '../worker/git';
 import { injectAnalyzer } from './analyzer';
 import { previewConfig, previewUrlFor } from './config';
@@ -104,29 +105,35 @@ const run = (
     });
   });
 
-// Some client repos keep the website in a subdirectory (e.g. marketing/ next
-// to admin/). npm run at a root without a package.json walks UP the tree and
-// lands on content-pilot's own package.json — install and the dev server must
-// run where the site actually lives.
-const findAppDir = (dir: string) => {
-  if (existsSync(join(dir, 'package.json'))) return dir;
-  const candidates = readdirSync(dir, { withFileTypes: true })
-    .filter(
-      (entry) =>
-        entry.isDirectory() &&
-        !entry.name.startsWith('.') &&
-        entry.name !== 'node_modules'
-    )
-    .map((entry) => join(dir, entry.name))
-    .filter((path) => existsSync(join(path, 'package.json')))
-    .sort();
-  if (!candidates.length) {
-    throw new Error('No package.json found in the repository.');
+/**
+ * Thrown when the supervisor can't tell which folder the site lives in — a repo
+ * whose root has no package.json and no admin-set app folder, or an app folder
+ * that points at a folder without one. It's an admin config problem, not a
+ * crash: startSession maps it to the `needs_config` status so the hub shows a
+ * "ask your admin" panel instead of a scary failure, and the client can retry
+ * once the app folder is fixed.
+ */
+export class AppDirConfigError extends Error {}
+
+// Some client repos keep several projects in one repo (e.g. marketing/ next to
+// admin/). We never guess which subfolder is the site — a wrong guess would run
+// and even publish the wrong project. The site folder is either the repo root
+// (single-app repos, the common case) or an explicit admin-set app folder;
+// anything else stops here with a config error the admin must resolve.
+const findAppDir = (dir: string, override?: string | null) => {
+  if (override) {
+    const app = join(dir, override);
+    if (!existsSync(join(app, 'package.json'))) {
+      throw new AppDirConfigError(
+        `The configured app folder "${override}" has no package.json — an admin needs to fix the app folder for this project.`
+      );
+    }
+    return app;
   }
-  const astro = candidates.find((path) =>
-    readdirSync(path).some((name) => name.startsWith('astro.config.'))
+  if (existsSync(join(dir, 'package.json'))) return dir;
+  throw new AppDirConfigError(
+    'This project keeps its site in a subfolder, so an admin needs to set its app folder before it can be previewed.'
   );
-  return astro ?? candidates[0];
 };
 
 // Every client repo is npm now. `npm ci` only works with a package-lock.json
@@ -178,12 +185,18 @@ const spawnDevServer = (
 ) => {
   // `--root .` pins the project root to appDir so an alternate `--config` in a
   // subfolder doesn't make Astro treat that subfolder as the root.
+  // `--ignore-lock` (Astro 7+, silently ignored by older versions) forces the
+  // dev server to run in the foreground: Astro 7 detects agentic environments
+  // and self-daemonizes — the spawned process exits 0 while a detached daemon
+  // serves, which the crash handler reads as a crash loop and the teardown can
+  // never kill. ignore-lock disables auto-backgrounding and lock-file checks.
   const flags = [
     ...(configArg ? ['--config', configArg, '--root', '.'] : []),
     '--port',
     String(port),
     '--host',
     '127.0.0.1',
+    '--ignore-lock',
   ];
   const [cmd, args] = hasDevScript(dir)
     ? ['npm', ['run', 'dev', '--', ...flags]]
@@ -269,7 +282,7 @@ export const startSession = async (row: SessionRow) => {
       branch: row.branch,
     });
 
-    const appDir = findAppDir(dir);
+    const appDir = findAppDir(dir, await getAppDir(row.repoId));
     await setStatus(row.id, 'installing');
     await installDeps(appDir);
     // npm leaves artifacts behind (lockfile updates, a fresh package-lock in
@@ -307,15 +320,22 @@ export const startSession = async (row: SessionRow) => {
     log(`session ${row.id}: ready on :${port}`);
   } catch (error) {
     const message = sanitize((error as Error).message || 'unknown error');
-    log(`session ${row.id}: failed — ${message}`);
+    const needsConfig = error instanceof AppDirConfigError;
+    log(
+      `session ${row.id}: ${needsConfig ? 'needs config' : 'failed'} — ${message}`
+    );
     const session = live.get(row.id);
     if (session) {
       session.closing = true;
       session.child.kill('SIGKILL');
       live.delete(row.id);
     }
-    await setStatus(row.id, 'failed', {
-      error: `The preview could not start: ${message.slice(0, 500)}`,
+    // A config problem is admin-fixable, not a crash — surface the plain message
+    // so the hub can tell the client to ask their admin (and retry after).
+    await setStatus(row.id, needsConfig ? 'needs_config' : 'failed', {
+      error: needsConfig
+        ? message.slice(0, 500)
+        : `The preview could not start: ${message.slice(0, 500)}`,
     });
   }
 };
@@ -352,9 +372,13 @@ export const teardownSession = async (
 /** Flushes proxy activity to the DB so the idle sweep survives restarts. */
 export const flushActivity = async () => {
   for (const [id, at] of lastActivity) {
+    // GREATEST: the web process also heartbeats lastActivityAt (transcript
+    // polling) — never let a stale in-memory proxy timestamp regress it.
     await db
       .update(previewSession)
-      .set({ lastActivityAt: new Date(at) })
+      .set({
+        lastActivityAt: sql`greatest(${previewSession.lastActivityAt}, ${new Date(at)})`,
+      })
       .where(eq(previewSession.id, id));
   }
 };

@@ -85,17 +85,6 @@ export const appSetting = pgTable('app_setting', {
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
-export const repo = pgTable('repo', {
-  id: serial('id').primaryKey(),
-  // GitHub repository id — the cross-system join key
-  repoId: integer('repo_id').notNull().unique(),
-  owner: text('owner').notNull(),
-  repo: text('repo').notNull(),
-  branch: text('branch').notNull().default('main'),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-});
-
 // ---------------------------------------------------------------------------
 // Outbound webhooks: notify downstream apps when a job reaches a terminal state.
 // ---------------------------------------------------------------------------
@@ -156,6 +145,11 @@ export const PREVIEW_SESSION_STATUS_VALUES = [
   'installing',
   'ready',
   'restarting',
+  // Terminal, admin-fixable: the repo's site folder can't be resolved (no root
+  // package.json + no app-folder override). Not "live" — a retry after the admin
+  // sets the app folder makes a fresh session. The hub shows an "ask your admin"
+  // panel for this instead of a generic failure.
+  'needs_config',
   'failed',
   'closed',
   'published',

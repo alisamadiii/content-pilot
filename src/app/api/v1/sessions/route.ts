@@ -25,6 +25,8 @@ const createSchema = z.object({
 const publicSession = (row: typeof previewSession.$inferSelect) => ({
   id: row.id,
   repoId: row.repoId,
+  owner: row.owner,
+  repo: row.repo,
   status: row.status,
   branch: row.branch,
   previewUrl: previewUrlFor(row.id),
@@ -138,23 +140,40 @@ export const GET = async (request: Request) => {
     return Response.json({ error: 'Unauthorized' }, { status: 401, headers });
   }
   const repoIdRaw = new URL(request.url).searchParams.get('repoId');
+  // No repoId → all live sessions (server-to-server only: the hub dashboard
+  // lists a user's active sessions and filters to their repos itself).
+  if (!repoIdRaw) {
+    if (auth.kind !== 'api-key') {
+      return Response.json({ error: 'Forbidden' }, { status: 403, headers });
+    }
+    const liveRows = await db
+      .select()
+      .from(previewSession)
+      .where(inArray(previewSession.status, LIVE))
+      .orderBy(desc(previewSession.createdAt));
+    return Response.json(
+      { sessions: liveRows.map(publicSession) },
+      { status: 200, headers }
+    );
+  }
   const repoId = Number(repoIdRaw);
-  if (!repoIdRaw || !Number.isInteger(repoId) || repoId <= 0) {
+  if (!Number.isInteger(repoId) || repoId <= 0) {
     return Response.json({ error: 'repoId required' }, { status: 400, headers });
   }
   if (auth.kind === 'edit-token' && auth.payload.repoId !== repoId) {
     return Response.json({ error: 'Forbidden' }, { status: 403, headers });
   }
-  // Failed sessions are returned too (newest first) so the hub can show the
-  // client-facing error instead of silently resetting; closing one from the
-  // UI marks it 'closed' and clears it from this lookup.
+  // Failed and needs-config sessions are returned too (newest first) so the hub
+  // can show the client-facing error / "ask your admin" panel instead of
+  // silently resetting; closing one from the UI marks it 'closed' and clears it
+  // from this lookup. needs_config isn't live, so a retry makes a fresh session.
   const [row] = await db
     .select()
     .from(previewSession)
     .where(
       and(
         eq(previewSession.repoId, repoId),
-        inArray(previewSession.status, [...LIVE, 'failed'])
+        inArray(previewSession.status, [...LIVE, 'failed', 'needs_config'])
       )
     )
     .orderBy(desc(previewSession.createdAt))

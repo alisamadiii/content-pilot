@@ -1,8 +1,9 @@
 import { and, desc, eq, gte, ilike, lte, or, sql } from 'drizzle-orm';
 import Link from 'next/link';
 import { db } from '@/db';
-import { job, JOB_STATUS_VALUES, repo, type JobStatus } from '@/db/schema';
+import { job, JOB_STATUS_VALUES, type JobStatus } from '@/db/schema';
 import { repoColor } from '@/lib/repo-color';
+import { listRepoOptions } from '@/lib/repos';
 import { AutoRefresh } from '../auto-refresh';
 import { JobActions } from './job-actions';
 
@@ -121,10 +122,7 @@ const JobsPage = async ({
     .limit(PAGE_SIZE)
     .offset((page - 1) * PAGE_SIZE);
 
-  const repos = await db
-    .select({ repoId: repo.repoId, owner: repo.owner, repo: repo.repo })
-    .from(repo)
-    .orderBy(repo.owner, repo.repo);
+  const repos = await listRepoOptions();
 
   const running = await db
     .select({

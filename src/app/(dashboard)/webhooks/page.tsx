@@ -1,6 +1,7 @@
 import { desc } from 'drizzle-orm';
 import { db } from '@/db';
-import { repo, webhook, webhookDelivery } from '@/db/schema';
+import { webhook, webhookDelivery } from '@/db/schema';
+import { listRepoOptions } from '@/lib/repos';
 import {
   CreateWebhookForm,
   DeleteWebhookButton,
@@ -22,7 +23,7 @@ const parseEvents = (raw: string): string[] => {
 const WebhooksPage = async () => {
   const [hooks, repos, deliveries] = await Promise.all([
     db.select().from(webhook).orderBy(desc(webhook.createdAt)),
-    db.select().from(repo).orderBy(desc(repo.updatedAt)),
+    listRepoOptions(),
     db
       .select()
       .from(webhookDelivery)

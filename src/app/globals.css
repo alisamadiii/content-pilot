@@ -140,7 +140,8 @@ tr:last-child td {
 }
 .status-starting,
 .status-installing,
-.status-restarting {
+.status-restarting,
+.status-needs_config {
   color: var(--yellow);
 }
 .status-closed,

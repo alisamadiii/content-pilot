@@ -1,34 +1,31 @@
-import { desc, eq, sql } from 'drizzle-orm';
-import { existsSync } from 'fs';
-import { join, resolve } from 'path';
+import { like } from 'drizzle-orm';
 import { db } from '@/db';
-import { job, repo } from '@/db/schema';
+import { appSetting } from '@/db/schema';
 import { repoColor } from '@/lib/repo-color';
+import { listWorkspaces } from '@/lib/repos';
+import { AppDirForm, DeleteCloneButton } from './repo-actions';
 
 export const dynamic = 'force-dynamic';
 
 const ReposPage = async () => {
-  const workspaceDir = resolve(process.env.WORKSPACE_DIR || './workspace');
-
-  const rows = await db
-    .select({
-      repoId: repo.repoId,
-      owner: repo.owner,
-      repo: repo.repo,
-      branch: repo.branch,
-      jobCount: sql<number>`(SELECT count(*) FROM ${job} WHERE ${job.repoId} = ${repo.repoId})`,
-      lastJobAt: sql<string | null>`(SELECT max(${job.createdAt}) FROM ${job} WHERE ${job.repoId} = ${repo.repoId})`,
-    })
-    .from(repo)
-    .orderBy(desc(repo.updatedAt));
+  const [rows, appDirRows] = await Promise.all([
+    listWorkspaces(),
+    db.select().from(appSetting).where(like(appSetting.key, 'app_dir:%')),
+  ]);
+  const appDirs = new Map(
+    appDirRows.map((r) => [Number(r.key.slice('app_dir:'.length)), r.value])
+  );
 
   return (
     <>
-      <h1>repos</h1>
-      <p className="subtitle">sites known to this instance</p>
+      <h1>workspaces</h1>
+      <p className="subtitle">
+        derived from the workspace + job/session history
+      </p>
       {rows.length === 0 ? (
         <div className="card muted">
-          No repos yet — they are registered automatically with the first job.
+          No workspaces yet — a folder appears here once a job or session clones
+          the repo into the workspace.
         </div>
       ) : (
         <table>
@@ -40,14 +37,12 @@ const ReposPage = async () => {
               <th>branch</th>
               <th>jobs</th>
               <th>last job</th>
-              <th>cloned</th>
+              <th>app folder</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => {
-              const cloned = existsSync(
-                join(workspaceDir, String(row.repoId), '.git')
-              );
               return (
                 <tr key={row.repoId}>
                   <td className="muted">{row.repoId}</td>
@@ -76,15 +71,20 @@ const ReposPage = async () => {
                   <td>{row.jobCount}</td>
                   <td className="muted">
                     {row.lastJobAt
-                      ? String(row.lastJobAt).replace('T', ' ').slice(0, 19)
+                      ? row.lastJobAt.toISOString().replace('T', ' ').slice(0, 19)
                       : '—'}
                   </td>
                   <td>
-                    {cloned ? (
-                      <span className="status status-done">yes</span>
-                    ) : (
-                      <span className="status status-queued">not yet</span>
-                    )}
+                    <AppDirForm
+                      repoId={row.repoId}
+                      value={appDirs.get(row.repoId) ?? ''}
+                    />
+                  </td>
+                  <td>
+                    <DeleteCloneButton
+                      repoId={row.repoId}
+                      label={`${row.owner}/${row.repo}`}
+                    />
                   </td>
                 </tr>
               );

@@ -24,6 +24,22 @@ export const setSetting = async (key: string, value: string): Promise<void> => {
     });
 };
 
+/** Per-repo app-subfolder override key (e.g. `app_dir:1247662764`). */
+export const appDirKey = (repoId: number) => `app_dir:${repoId}`;
+
+/**
+ * The configured app subfolder for a repo (relative to the clone root), or null
+ * when unset/auto. Sanitized: trimmed, slashes stripped, and traversal/absolute
+ * paths rejected so the value can only ever name a folder inside the clone.
+ */
+export const getAppDir = async (repoId: number): Promise<string | null> => {
+  const raw = await getSetting(appDirKey(repoId));
+  const value = (raw ?? '').trim().replace(/^\/+|\/+$/g, '');
+  if (!value) return null;
+  if (value.startsWith('/') || value.split('/').includes('..')) return null;
+  return value;
+};
+
 export const MAX_SESSIONS_KEY = 'max_preview_sessions';
 const MAX_SESSIONS_CEILING = 20;
 

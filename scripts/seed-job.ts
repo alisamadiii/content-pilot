@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { db, client } from '../src/db';
-import { job, repo } from '../src/db/schema';
+import { job } from '../src/db/schema';
 
 /**
  * Inserts a mock job for local testing.
@@ -22,11 +22,6 @@ const main = async () => {
   const prompt =
     promptParts.join(' ') ||
     'Change the hero headline to "Welcome to my portfolio"';
-
-  await db
-    .insert(repo)
-    .values({ repoId, owner, repo: repoName, branch: targetBranch })
-    .onConflictDoNothing();
 
   const [created] = await db
     .insert(job)

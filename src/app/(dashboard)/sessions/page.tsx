@@ -91,12 +91,27 @@ const SessionsPage = async ({
     .limit(PAGE_SIZE)
     .offset((page - 1) * PAGE_SIZE);
 
-  const messageCounts = new Map<string, number>();
+  type SessionUsage = {
+    count: number;
+    models: string | null;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+  };
+  const messageStats = new Map<string, SessionUsage>();
   if (rows.length) {
+    // Per-session AI usage rollup — model, tokens and cost live on each
+    // message row (reported by the Claude CLI per run).
     const counts = await db
       .select({
         sessionId: previewMessage.sessionId,
         count: sql<number>`count(*)::int`,
+        models: sql<
+          string | null
+        >`string_agg(distinct ${previewMessage.model}, ', ')`,
+        inputTokens: sql<number>`coalesce(sum(${previewMessage.inputTokens}), 0)::int`,
+        outputTokens: sql<number>`coalesce(sum(${previewMessage.outputTokens}), 0)::int`,
+        costUsd: sql<number>`coalesce(sum(${previewMessage.costUsd}), 0)::float`,
       })
       .from(previewMessage)
       .where(
@@ -107,7 +122,7 @@ const SessionsPage = async ({
       )
       .groupBy(previewMessage.sessionId);
     for (const entry of counts) {
-      messageCounts.set(entry.sessionId, entry.count);
+      messageStats.set(entry.sessionId, entry);
     }
   }
 
@@ -165,6 +180,7 @@ const SessionsPage = async ({
               <th>port</th>
               <th>by</th>
               <th>msgs</th>
+              <th>tokens</th>
               <th>last activity</th>
               <th>created</th>
               <th></th>
@@ -175,6 +191,7 @@ const SessionsPage = async ({
               const isLive = LIVE.includes(
                 row.status as (typeof LIVE)[number]
               );
+              const usage = messageStats.get(row.id);
               return (
                 <tr key={row.id}>
                   <td>
@@ -199,7 +216,24 @@ const SessionsPage = async ({
                   </td>
                   <td className="muted">{row.port ?? '—'}</td>
                   <td className="muted">{row.requestedBy || '—'}</td>
-                  <td className="muted">{messageCounts.get(row.id) ?? 0}</td>
+                  <td className="muted">{usage?.count ?? 0}</td>
+                  <td className="muted">
+                    {usage && usage.inputTokens + usage.outputTokens > 0 ? (
+                      <>
+                        {(
+                          usage.inputTokens + usage.outputTokens
+                        ).toLocaleString()}
+                        <div style={{ fontSize: 12 }}>
+                          ${usage.costUsd.toFixed(4)}
+                        </div>
+                        {usage.models && (
+                          <div style={{ fontSize: 11 }}>{usage.models}</div>
+                        )}
+                      </>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td className="muted">{formatDate(row.lastActivityAt)}</td>
                   <td className="muted">{formatDate(row.createdAt)}</td>
                   <td>

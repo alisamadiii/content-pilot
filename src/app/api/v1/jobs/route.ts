@@ -1,7 +1,7 @@
 import { and, count, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/db';
-import { job, repo } from '@/db/schema';
+import { job } from '@/db/schema';
 import { verifyApiKey } from '@/lib/api-key';
 import { resolveRepo } from '@/lib/resolve-repo';
 
@@ -81,24 +81,6 @@ export const POST = async (request: Request) => {
       { status: 422 }
     );
   }
-
-  await db
-    .insert(repo)
-    .values({
-      repoId: input.repoId,
-      owner: resolved.owner,
-      repo: resolved.repo,
-      branch,
-    })
-    .onConflictDoUpdate({
-      target: repo.repoId,
-      set: {
-        owner: resolved.owner,
-        repo: resolved.repo,
-        branch,
-        updatedAt: new Date(),
-      },
-    });
 
   const [created] = await db
     .insert(job)

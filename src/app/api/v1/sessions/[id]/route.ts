@@ -46,6 +46,22 @@ export const GET = async (
     return Response.json({ error: 'Not available' }, { status: result.error, headers });
   }
   const row = result.row;
+  // Heartbeat: the hub polls this transcript every ~15s while the chat panel
+  // is open in a visible tab, so counting it as activity means "panel open =
+  // session alive". React Query stops polling in hidden/closed tabs, so a
+  // walked-away client stops heartbeating and the idle sweep reclaims the
+  // dev server after the (short) TTL.
+  if (
+    row.status === 'starting' ||
+    row.status === 'installing' ||
+    row.status === 'ready' ||
+    row.status === 'restarting'
+  ) {
+    await db
+      .update(previewSession)
+      .set({ lastActivityAt: new Date() })
+      .where(eq(previewSession.id, id));
+  }
   const messages = await db
     .select({
       id: previewMessage.id,
