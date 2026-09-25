@@ -112,23 +112,28 @@ export const syncRepo = async (params: {
   return dir;
 };
 
+/**
+ * One `git status --porcelain` line → the changed path. Exported for tests.
+ * git() trims stdout, so the FIRST line may have lost its leading status
+ * space (' M _site.json' → 'M _site.json') — a fixed slice(3) then eats the
+ * path's first character. Strip the 1–2 char status code explicitly.
+ */
+export const parsePorcelainLine = (line: string) => {
+  const path = line
+    .replace(/^[ MADRCU?!]{1,2}\s+/, '')
+    .trim()
+    .replace(/^"|"$/g, '');
+  // Renames list as 'old -> new'; the new path is what exists on disk.
+  const arrow = path.indexOf(' -> ');
+  return arrow === -1 ? path : path.slice(arrow + 4);
+};
+
 export const changedFiles = async (dir: string) => {
   const output = await git(dir, ['status', '--porcelain']);
   if (!output) {
     return [];
   }
-  return output.split('\n').map((line) => {
-    // git() trims stdout, so the FIRST line may have lost its leading status
-    // space (' M _site.json' → 'M _site.json') — a fixed slice(3) then eats
-    // the path's first character. Strip the 1–2 char status code explicitly.
-    const path = line
-      .replace(/^[ MADRCU?!]{1,2}\s+/, '')
-      .trim()
-      .replace(/^"|"$/g, '');
-    // Renames list as 'old -> new'; the new path is what exists on disk.
-    const arrow = path.indexOf(' -> ');
-    return arrow === -1 ? path : path.slice(arrow + 4);
-  });
+  return output.split('\n').map(parsePorcelainLine);
 };
 
 export const discardChanges = async (dir: string) => {

@@ -12,7 +12,8 @@
     "preview": "tsx src/preview/index.ts",
     "db:push": "drizzle-kit push",
     "seed": "tsx scripts/seed-job.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "better-auth": "^1.3.34",
