@@ -138,6 +138,125 @@ export const webhookDelivery = pgTable(
   ]
 );
 
+// ---------------------------------------------------------------------------
+// Live-preview AI sessions: an ephemeral dev server + Claude chat per repo.
+// The preview supervisor (src/preview/) owns these rows end to end.
+// ---------------------------------------------------------------------------
+
+export const PREVIEW_SESSION_STATUS_VALUES = [
+  'starting',
+  'installing',
+  'ready',
+  'restarting',
+  'failed',
+  'closed',
+  'published',
+  'expired',
+] as const;
+export type PreviewSessionStatus =
+  (typeof PREVIEW_SESSION_STATUS_VALUES)[number];
+
+/** Statuses in which a session owns its repo clone and dev server. */
+export const PREVIEW_SESSION_LIVE_STATUSES = [
+  'starting',
+  'installing',
+  'ready',
+  'restarting',
+] as const;
+
+export const previewSession = pgTable(
+  'preview_session',
+  {
+    // nanoid(12), lowercase — doubles as the preview subdomain label and the
+    // suffix of the git branch (preview/<id>).
+    id: text('id').primaryKey(),
+    repoId: integer('repo_id').notNull(),
+    // Denormalized like job — the supervisor never needs joins
+    owner: text('owner').notNull(),
+    repo: text('repo').notNull(),
+    branch: text('branch').notNull(),
+    status: text('status')
+      .$type<PreviewSessionStatus>()
+      .notNull()
+      .default('starting'),
+    // Dev-server runtime state, persisted for boot reconciliation
+    port: integer('port'),
+    pid: integer('pid'),
+    // Claude Code CLI session id (from the stream-json init event); --resume
+    // target so the chat keeps conversational context across messages.
+    claudeSessionId: text('claude_session_id'),
+    // Client-facing error when status = failed
+    error: text('error'),
+    requestedBy: text('requested_by'),
+    lastActivityAt: timestamp('last_activity_at').notNull().defaultNow(),
+    closedAt: timestamp('closed_at'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_preview_session_repo_status').on(table.repoId, table.status),
+  ]
+);
+
+export const PREVIEW_MESSAGE_STATUS_VALUES = [
+  'queued',
+  'running',
+  'done',
+  'failed',
+  'rejected',
+] as const;
+export type PreviewMessageStatus =
+  (typeof PREVIEW_MESSAGE_STATUS_VALUES)[number];
+
+export const previewMessage = pgTable(
+  'preview_message',
+  {
+    id: serial('id').primaryKey(),
+    sessionId: text('session_id').notNull(),
+    role: text('role').$type<'user' | 'assistant'>().notNull(),
+    content: text('content').notNull(),
+    status: text('status')
+      .$type<PreviewMessageStatus>()
+      .notNull()
+      .default('queued'),
+    commitSha: text('commit_sha'),
+    error: text('error'),
+    model: text('model'),
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    costUsd: doublePrecision('cost_usd'),
+    startedAt: timestamp('started_at'),
+    finishedAt: timestamp('finished_at'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => [index('idx_preview_message_session').on(table.sessionId, table.id)]
+);
+
+export const PREVIEW_EVENT_TYPE_VALUES = [
+  'status',
+  'claude',
+  'commit',
+  'message-done',
+  'session-error',
+] as const;
+export type PreviewEventType = (typeof PREVIEW_EVENT_TYPE_VALUES)[number];
+
+// SSE backing store: every chat/session event is a row so reconnecting
+// clients replay losslessly via Last-Event-ID. Pruned on session close.
+export const previewEvent = pgTable(
+  'preview_event',
+  {
+    id: serial('id').primaryKey(),
+    sessionId: text('session_id').notNull(),
+    messageId: integer('message_id'),
+    type: text('type').$type<PreviewEventType>().notNull(),
+    // JSON payload, shape depends on type
+    data: text('data').notNull(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => [index('idx_preview_event_session').on(table.sessionId, table.id)]
+);
+
 export const JOB_STATUS_VALUES = [
   'queued',
   'running',

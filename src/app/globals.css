@@ -134,6 +134,22 @@ tr:last-child td {
 .status-canceled {
   color: var(--red);
 }
+/* Preview AI sessions */
+.status-ready {
+  color: var(--green);
+}
+.status-starting,
+.status-installing,
+.status-restarting {
+  color: var(--yellow);
+}
+.status-closed,
+.status-expired {
+  color: var(--muted);
+}
+.status-published {
+  color: var(--purple);
+}
 
 .card {
   border: 1px solid var(--border);

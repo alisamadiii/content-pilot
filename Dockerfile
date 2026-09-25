@@ -38,6 +38,9 @@ ENV PORT=3010
 ENV HOSTNAME=0.0.0.0
 ENV WORKSPACE_DIR=/data/workspace
 
+# Preview proxy (wildcard *.preview domain routes here via Traefik)
+EXPOSE 3020
+
 EXPOSE 3010
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
   CMD wget -qO- http://127.0.0.1:3010/api/health || exit 1

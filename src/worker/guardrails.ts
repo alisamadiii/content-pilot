@@ -33,6 +33,25 @@ Your VERY LAST line of output must be exactly one JSON array with one entry per 
 [{"id":<request id>,"status":"done","summary":"<one sentence describing the change>"},{"id":<request id>,"status":"failed","error":"<short plain message>"}]
 Every request id must appear exactly once.`;
 
+// Live-preview chat sessions: same content-only scope as the guardrailed
+// batch mode, but conversational — no numbered requests, no verdict-JSON
+// protocol. The client watches a live preview, so Claude's reply is shown
+// directly in a chat bubble.
+export const SESSION_PROMPT = `You are a website editor chatting live with the site owner while they watch a live preview of their site. Changes appear in the preview instantly and only go live when the owner clicks Publish, so you can edit generously.
+
+ALLOWED: any content, copy, image, or SEO change; styling tweaks; editing existing components; ADDING new sections or components to an existing page; adjusting layout within a page; CMS data in the root _site.json, _pages.json, and _collections/*.json files.
+
+FORBIDDEN — exactly two things, do NOT attempt them even partially:
+1. Redesigning an entire page (a full visual overhaul of a page's look and structure).
+2. Creating or deleting pages or routes.
+Also never touch .env files or other secrets, and never edit package.json, lockfiles, CI workflows, or anything in .github/ — you cannot install dependencies or run commands, so such edits only break the live preview.
+
+Many sites use a CMS contract: _site.json (site-wide data and SEO), _pages.json (per-page content addressed by dotted field paths like home.hero.headline), _collections/*.json (repeatable items). If the requested content lives in these files, edit the JSON value there (keep structure and keys intact) rather than hardcoding text in components. If the repo has a CLAUDE.md or AGENTS.md, follow its conventions where they do not conflict with these rules.
+
+If the request is one of the two forbidden things, make NO edits and explain warmly, in second person and without technical jargon, that a full page redesign or a brand-new page is something their developer handles personally — everything else (text, images, new sections, styling) you can do for them anytime. If the request is allowed but you cannot confidently locate the exact content, make NO edits and say plainly what you could not find — never guess, never edit a different element to compensate.
+
+Your reply is shown to the site owner in a chat. Keep it short and friendly: one or two sentences saying what you changed (or why you could not). The preview updates automatically, so no need to tell them to refresh.`;
+
 // Paths the AI must never change under the normal guardrails; any hit reverts
 // the batch's edits.
 const DENYLIST_PATTERNS: RegExp[] = [
@@ -53,6 +72,23 @@ const DENYLIST_PATTERNS: RegExp[] = [
 // The safety floor: forbidden in EVERY mode, including admin-approved
 // unrestricted reruns — secrets never get committed by the bot.
 const SECRET_PATTERNS: RegExp[] = [/^\.env/, /(^|\/)\.env/];
+
+// Live-preview sessions edit generously (styling, new sections) — only
+// secrets and preview-breaking files are blocked. Patterns are exact, not
+// the batch denylist's broad /lock/i, so a component named "Block.astro"
+// never trips it.
+const SESSION_FORBIDDEN_PATTERNS: RegExp[] = [
+  ...SECRET_PATTERNS,
+  /(^|\/)package\.json$/,
+  /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/,
+  /^\.github\//,
+  /(^|\/)node_modules\//,
+];
+
+export const findSessionForbiddenPaths = (paths: string[]) =>
+  paths.filter((path) =>
+    SESSION_FORBIDDEN_PATTERNS.some((pattern) => pattern.test(path))
+  );
 
 export const findForbiddenPaths = (
   paths: string[],

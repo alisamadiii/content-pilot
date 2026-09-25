@@ -17,6 +17,12 @@ export const claimBatch = async (): Promise<Job[]> => {
       SELECT repo_id AS "repoId", unrestricted FROM job
       WHERE status = 'queued'
         AND repo_id NOT IN (SELECT repo_id FROM job WHERE status = 'running')
+        -- A live preview session owns the repo clone (its dev server serves
+        -- that working tree); batches for the repo wait until it ends.
+        AND repo_id NOT IN (
+          SELECT repo_id FROM preview_session
+          WHERE status IN ('starting','installing','ready','restarting')
+        )
       ORDER BY created_at
       FOR UPDATE SKIP LOCKED
       LIMIT 1
