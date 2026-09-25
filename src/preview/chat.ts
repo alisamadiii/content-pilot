@@ -279,10 +279,12 @@ const processMessage = async (row: MessageRow) => {
         );
         await persistClaudeSessionId();
         await discardChanges(session.dir);
+        // reply=null — the error row already carries the message; a matching
+        // assistant bubble would just duplicate it in the transcript.
         await finishMessage(
           row,
           { status: 'failed', error: BROKE_PREVIEW_MESSAGE, ...usage },
-          BROKE_PREVIEW_MESSAGE
+          null
         );
         return;
       }

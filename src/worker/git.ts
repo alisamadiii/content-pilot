@@ -117,7 +117,18 @@ export const changedFiles = async (dir: string) => {
   if (!output) {
     return [];
   }
-  return output.split('\n').map((line) => line.slice(3).trim().replace(/^"|"$/g, ''));
+  return output.split('\n').map((line) => {
+    // git() trims stdout, so the FIRST line may have lost its leading status
+    // space (' M _site.json' → 'M _site.json') — a fixed slice(3) then eats
+    // the path's first character. Strip the 1–2 char status code explicitly.
+    const path = line
+      .replace(/^[ MADRCU?!]{1,2}\s+/, '')
+      .trim()
+      .replace(/^"|"$/g, '');
+    // Renames list as 'old -> new'; the new path is what exists on disk.
+    const arrow = path.indexOf(' -> ');
+    return arrow === -1 ? path : path.slice(arrow + 4);
+  });
 };
 
 export const discardChanges = async (dir: string) => {
