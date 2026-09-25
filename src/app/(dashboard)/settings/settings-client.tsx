@@ -5,6 +5,7 @@ import {
   createApiKeyAction,
   deleteApiKeyAction,
   revokeApiKeyAction,
+  setMaxSessionsAction,
 } from './actions';
 
 export const CreateKeyForm = () => {
@@ -47,6 +48,43 @@ export const CreateKeyForm = () => {
         </div>
       )}
     </div>
+  );
+};
+
+export const MaxSessionsForm = ({ current }: { current: number }) => {
+  const [pending, startTransition] = useTransition();
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <form
+      className="row"
+      action={(formData) => {
+        setError(null);
+        setSaved(false);
+        startTransition(async () => {
+          try {
+            await setMaxSessionsAction(formData);
+            setSaved(true);
+          } catch (e) {
+            setError(e instanceof Error ? e.message : 'Could not save.');
+          }
+        });
+      }}
+    >
+      <input
+        type="number"
+        name="max"
+        min={1}
+        max={20}
+        defaultValue={current}
+        style={{ maxWidth: 90 }}
+      />
+      <button className="primary" type="submit" disabled={pending}>
+        {pending ? '...' : 'save'}
+      </button>
+      {saved && <span className="status status-done">saved</span>}
+      {error && <span className="error-text">{error}</span>}
+    </form>
   );
 };
 

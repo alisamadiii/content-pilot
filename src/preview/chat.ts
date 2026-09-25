@@ -84,9 +84,14 @@ const processMessage = async (row: MessageRow) => {
   }, 300);
 
   try {
+    // The hub-supplied page/element context steers the AI straight to the file
+    // (fewer tool calls); the client only ever sees `content` in the transcript.
+    const prompt = row.context
+      ? `${row.context}\n\n---\n\n${row.content}`
+      : row.content;
     const run = await runSessionClaude({
       cwd: session.dir,
-      prompt: row.content,
+      prompt,
       claudeSessionId: sessionRow.claudeSessionId,
       onEvent: (event) => {
         pending.push(event);

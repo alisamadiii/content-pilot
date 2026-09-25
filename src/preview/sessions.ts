@@ -7,6 +7,7 @@ import { join } from 'path';
 import { db } from '@/db';
 import { previewEvent, previewSession, type PreviewSessionStatus } from '@/db/schema';
 import { discardChanges, sanitize, syncRepo } from '../worker/git';
+import { injectAnalyzer } from './analyzer';
 import { previewConfig, previewUrlFor } from './config';
 import { emitEvent } from './events';
 import { lastActivity, registerRoute, unregisterRoute } from './proxy';
@@ -19,6 +20,8 @@ type LiveSession = {
   dir: string;
   /** Where the website's package.json lives — dir itself or a subproject. */
   appDir: string;
+  /** `--config` path (relative to appDir) for the injected analyzer, or null. */
+  configArg: string | null;
   port: number;
   child: ChildProcess;
   restarts: number;
@@ -168,11 +171,23 @@ const hasDevScript = (dir: string) => {
   }
 };
 
-const spawnDevServer = (dir: string, port: number) => {
-  const portArgs = ['--port', String(port), '--host', '127.0.0.1'];
+const spawnDevServer = (
+  dir: string,
+  port: number,
+  configArg: string | null
+) => {
+  // `--root .` pins the project root to appDir so an alternate `--config` in a
+  // subfolder doesn't make Astro treat that subfolder as the root.
+  const flags = [
+    ...(configArg ? ['--config', configArg, '--root', '.'] : []),
+    '--port',
+    String(port),
+    '--host',
+    '127.0.0.1',
+  ];
   const [cmd, args] = hasDevScript(dir)
-    ? ['npm', ['run', 'dev', '--', ...portArgs]]
-    : ['npx', ['astro', 'dev', ...portArgs]];
+    ? ['npm', ['run', 'dev', '--', ...flags]]
+    : ['npx', ['astro', 'dev', ...flags]];
   return spawn(cmd, args as string[], {
     cwd: dir,
     env: {
@@ -222,7 +237,11 @@ const attachCrashHandler = (session: LiveSession) => {
       session.restarts += 1;
       await setStatus(session.id, 'restarting');
       try {
-        session.child = spawnDevServer(session.appDir, session.port);
+        session.child = spawnDevServer(
+          session.appDir,
+          session.port,
+          session.configArg
+        );
         session.lastSpawnAt = Date.now();
         attachCrashHandler(session);
         await waitForReady(session.port, session.child);
@@ -259,13 +278,20 @@ export const startSession = async (row: SessionRow) => {
     // artifact, trip the forbidden-path floor, and revert Claude's real edit.
     await discardChanges(dir);
 
+    // Inject the preview-only AI analyzer (replaces cms-bridge for the session,
+    // stamps data-cms-src, powers click-to-point-the-AI). Git-invisible and
+    // never touches the real astro.config, so it can't leak into a publish.
+    const configArg = injectAnalyzer(dir, appDir);
+    if (configArg) log(`session ${row.id}: analyzer injected (${configArg})`);
+
     const port = await allocatePort();
-    const child = spawnDevServer(appDir, port);
+    const child = spawnDevServer(appDir, port, configArg);
     const session: LiveSession = {
       id: row.id,
       repoId: row.repoId,
       dir,
       appDir,
+      configArg,
       port,
       child,
       restarts: 0,

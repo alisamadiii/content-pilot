@@ -9,6 +9,9 @@ import {
 
 const messageSchema = z.object({
   content: z.string().trim().min(2).max(4000),
+  // Page/element context the hub attaches (viewed page + clicked element source
+  // ref). Prepended to the prompt; never displayed. Optional.
+  context: z.string().trim().max(2000).optional(),
 });
 
 // Mirrors the intake abuse guard: a runaway client can't queue unbounded work.
@@ -79,6 +82,7 @@ export const POST = async (
       sessionId: id,
       role: 'user',
       content: parsed.data.content,
+      context: parsed.data.context ?? null,
       status: 'queued',
     })
     .returning({ id: previewMessage.id });

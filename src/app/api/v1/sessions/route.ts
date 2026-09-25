@@ -7,12 +7,13 @@ import {
   previewSession,
 } from '@/db/schema';
 import { resolveRepo } from '@/lib/resolve-repo';
+import { getMaxSessions } from '@/lib/settings';
 import {
   authenticateSessionRequest,
   newSessionId,
   sessionCorsHeaders,
 } from '@/lib/session-auth';
-import { previewConfig, previewUrlFor } from '@/preview/config';
+import { previewUrlFor } from '@/preview/config';
 
 const LIVE = [...PREVIEW_SESSION_LIVE_STATUSES];
 
@@ -92,7 +93,7 @@ export const POST = async (request: Request) => {
     .select({ id: previewSession.id })
     .from(previewSession)
     .where(inArray(previewSession.status, LIVE));
-  if (activeRows.length >= previewConfig.maxSessions) {
+  if (activeRows.length >= (await getMaxSessions())) {
     return Response.json(
       { error: 'All preview slots are busy right now. Please try again in a few minutes.' },
       { status: 429, headers }

@@ -1,9 +1,11 @@
 import { desc } from 'drizzle-orm';
 import { db } from '@/db';
 import { apiKey } from '@/db/schema';
+import { getMaxSessions } from '@/lib/settings';
 import {
   CreateKeyForm,
   DeleteKeyButton,
+  MaxSessionsForm,
   RevokeKeyButton,
 } from './settings-client';
 
@@ -14,6 +16,7 @@ const SettingsPage = async () => {
     .select()
     .from(apiKey)
     .orderBy(desc(apiKey.createdAt));
+  const maxSessions = await getMaxSessions();
 
   return (
     <>
@@ -69,6 +72,18 @@ const SettingsPage = async () => {
             </tbody>
           </table>
         )}
+      </div>
+
+      <div className="card">
+        <div style={{ marginBottom: 12, fontWeight: 600 }}>
+          Preview sessions
+        </div>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Maximum live AI preview sessions running at once (each holds a dev
+          server + port). Clients hitting the cap are asked to wait or use the
+          classic click-to-edit flow. Takes effect immediately — no restart.
+        </p>
+        <MaxSessionsForm current={maxSessions} />
       </div>
 
       <div className="card">

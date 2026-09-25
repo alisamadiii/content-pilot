@@ -24,6 +24,8 @@ COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 # Worker + schema sources (run with tsx, no build step)
 COPY --from=build --chown=nextjs:nodejs /app/src ./src
+# Preview-only AI analyzer folder, copied into each client clone at session start
+COPY --from=build --chown=nextjs:nodejs /app/ai-analyzer ./ai-analyzer
 COPY --from=build --chown=nextjs:nodejs /app/scripts ./scripts
 COPY --from=build --chown=nextjs:nodejs /app/drizzle.config.ts /app/tsconfig.json ./
 COPY --from=build --chown=nextjs:nodejs /app/node_modules ./node_modules

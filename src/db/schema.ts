@@ -77,6 +77,14 @@ export const apiKey = pgTable('api_key', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+// Generic admin-editable key-value settings (e.g. max concurrent preview
+// sessions). Defaults live in code; a row here overrides at runtime.
+export const appSetting = pgTable('app_setting', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
 export const repo = pgTable('repo', {
   id: serial('id').primaryKey(),
   // GitHub repository id — the cross-system join key
@@ -215,6 +223,10 @@ export const previewMessage = pgTable(
     sessionId: text('session_id').notNull(),
     role: text('role').$type<'user' | 'assistant'>().notNull(),
     content: text('content').notNull(),
+    // Page/element context (viewed page URL, clicked element source ref + text)
+    // prepended to the Claude prompt so it locates the target without scanning
+    // the repo. Never shown in the chat transcript — display uses `content`.
+    context: text('context'),
     status: text('status')
       .$type<PreviewMessageStatus>()
       .notNull()

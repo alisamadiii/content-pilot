@@ -102,60 +102,89 @@ const SessionDetailPage = async ({
       {messages.length === 0 ? (
         <div className="card muted">No messages yet.</div>
       ) : (
-        messages.map((message) => (
-          <div key={message.id} className="card">
+        messages.map((message) => {
+          const mine = message.role === 'user';
+          return (
             <div
-              className="muted"
+              key={message.id}
               style={{
-                fontSize: 12,
-                marginBottom: 4,
                 display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                flexWrap: 'wrap',
+                flexDirection: 'column',
+                alignItems: mine ? 'flex-end' : 'flex-start',
+                marginBottom: 14,
               }}
             >
-              <span
+              <div
+                className="muted"
                 style={{
-                  fontWeight: 600,
-                  color:
-                    message.role === 'user' ? 'var(--accent)' : 'var(--fg)',
+                  fontSize: 12,
+                  marginBottom: 4,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                  justifyContent: mine ? 'flex-end' : 'flex-start',
+                  maxWidth: '72%',
                 }}
               >
-                {message.role === 'user' ? 'client' : 'AI'}
-              </span>
-              <span className={`status status-${message.status}`}>
-                {message.status}
-              </span>
-              {message.commitSha && (
-                <a
-                  href={`https://github.com/${row.owner}/${row.repo}/commit/${message.commitSha}`}
-                  target="_blank"
-                  rel="noreferrer"
+                <span
+                  style={{
+                    fontWeight: 600,
+                    color: mine ? 'var(--accent)' : 'var(--fg)',
+                  }}
                 >
-                  {message.commitSha.slice(0, 7)} ↗
-                </a>
-              )}
-              <span>{formatDate(message.createdAt)}</span>
-              {message.inputTokens != null && (
-                <span>
-                  {message.inputTokens.toLocaleString()} in /{' '}
-                  {(message.outputTokens ?? 0).toLocaleString()} out
-                  {message.costUsd != null && (
-                    <> · ${message.costUsd.toFixed(4)}</>
-                  )}
-                  {message.model && <> · {message.model}</>}
+                  {mine ? 'client' : 'AI'}
                 </span>
-              )}
-            </div>
-            <div style={{ whiteSpace: 'pre-wrap' }}>{message.content}</div>
-            {message.error && (
-              <div className="error-text" style={{ fontSize: 12, marginTop: 6 }}>
-                {message.error}
+                <span className={`status status-${message.status}`}>
+                  {message.status}
+                </span>
+                {message.commitSha && (
+                  <a
+                    href={`https://github.com/${row.owner}/${row.repo}/commit/${message.commitSha}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {message.commitSha.slice(0, 7)} ↗
+                  </a>
+                )}
+                <span>{formatDate(message.createdAt)}</span>
+                {message.inputTokens != null && (
+                  <span>
+                    {message.inputTokens.toLocaleString()} in /{' '}
+                    {(message.outputTokens ?? 0).toLocaleString()} out
+                    {message.costUsd != null && (
+                      <> · ${message.costUsd.toFixed(4)}</>
+                    )}
+                    {message.model && <> · {message.model}</>}
+                  </span>
+                )}
               </div>
-            )}
-          </div>
-        ))
+              <div
+                style={{
+                  maxWidth: '72%',
+                  whiteSpace: 'pre-wrap',
+                  padding: '10px 14px',
+                  borderRadius: 12,
+                  border: '1px solid var(--border)',
+                  background: mine ? 'var(--accent)' : 'var(--bg-alt)',
+                  color: mine ? '#0d1117' : 'var(--fg)',
+                  borderBottomRightRadius: mine ? 2 : 12,
+                  borderBottomLeftRadius: mine ? 12 : 2,
+                }}
+              >
+                {message.content}
+                {message.error && (
+                  <div
+                    className="error-text"
+                    style={{ fontSize: 12, marginTop: 6 }}
+                  >
+                    {message.error}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })
       )}
     </>
   );

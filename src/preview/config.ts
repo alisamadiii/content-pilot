@@ -18,8 +18,9 @@ export const previewConfig = {
   installTimeoutMs: Number(process.env.INSTALL_TIMEOUT_MS) || 300_000,
   devReadyTimeoutMs: Number(process.env.DEV_READY_TIMEOUT_MS) || 120_000,
   messageTimeoutMs: Number(process.env.SESSION_MESSAGE_TIMEOUT_MS) || 600_000,
-  // Conversational edits need more model than the overlay's one-shot haiku.
-  claudeModel: process.env.SESSION_CLAUDE_MODEL || 'sonnet',
+  // Match the batch jobs model (haiku) — cheap + fast for content edits. Bump
+  // via SESSION_CLAUDE_MODEL if a client's edits need a stronger model.
+  claudeModel: process.env.SESSION_CLAUDE_MODEL || 'haiku',
 };
 
 export const previewUrlFor = (sessionId: string) =>
