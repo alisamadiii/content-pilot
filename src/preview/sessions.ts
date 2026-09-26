@@ -201,6 +201,18 @@ const spawnDevServer = (
   const [cmd, args] = hasDevScript(dir)
     ? ['npm', ['run', 'dev', '--', ...flags]]
     : ['npx', ['astro', 'dev', ...flags]];
+  // Public scheme/port for the HMR websocket (read by the injected wrapper
+  // config) — the browser must dial the proxy's public endpoint, never the
+  // dev server's internal port.
+  let publicProtocol = 'http';
+  let publicPort = '80';
+  try {
+    const url = new URL(previewUrlFor('x'));
+    publicProtocol = url.protocol.replace(':', '');
+    publicPort = url.port || (publicProtocol === 'https' ? '443' : '80');
+  } catch {
+    // keep defaults
+  }
   return spawn(cmd, args as string[], {
     cwd: dir,
     env: {
@@ -208,6 +220,8 @@ const spawnDevServer = (
       // Belt and braces for Vite's host check; the proxy already rewrites
       // Host to localhost via changeOrigin.
       __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: allowedHostSuffix(),
+      PREVIEW_PUBLIC_PROTOCOL: publicProtocol,
+      PREVIEW_PUBLIC_PORT: publicPort,
       FORCE_COLOR: '0',
     },
     detached: false,

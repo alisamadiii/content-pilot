@@ -182,6 +182,25 @@ const SessionDetailPage = async ({
                   </div>
                 )}
               </div>
+              {/* Hub-supplied context (viewed page, picked element source ref)
+                  prepended to the AI prompt — never shown to the client, but
+                  gold for debugging which element a request targeted. */}
+              {message.context && (
+                <div
+                  className="muted"
+                  style={{
+                    maxWidth: '72%',
+                    whiteSpace: 'pre-wrap',
+                    fontSize: 11.5,
+                    marginTop: 4,
+                    padding: '6px 10px',
+                    borderRadius: 8,
+                    border: '1px dashed var(--border)',
+                  }}
+                >
+                  {message.context}
+                </div>
+              )}
             </div>
           );
         })

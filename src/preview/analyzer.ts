@@ -65,11 +65,30 @@ export const injectAnalyzer = (dir: string, appDir: string): string | null => {
   // Wrapper config: extend the client's real config, drop its committed
   // cms-bridge integration, add the analyzer. Exactly one integration then
   // annotates — no double build.
+  //
+  // The HMR block is load-bearing: Vite's client defaults its websocket to the
+  // dev server's OWN port (e.g. wss://<id>.<domain>:4100), which is unreachable
+  // through the preview proxy/Cloudflare — live updates silently die and the
+  // client must hard-reload. Pointing the client at the PUBLIC scheme/port
+  // (env from spawnDevServer) routes HMR through the proxy like everything else.
   const wrapper = `import base from ${JSON.stringify(`../${configName}`)};
 import aiAnalyzer from './integration.mjs';
 
 const list = (base.integrations ?? []).filter((i) => i?.name !== 'cms-bridge');
-export default { ...base, integrations: [...list, aiAnalyzer({})] };
+
+const hmr = {
+  protocol: process.env.PREVIEW_PUBLIC_PROTOCOL === 'https' ? 'wss' : 'ws',
+  clientPort: Number(process.env.PREVIEW_PUBLIC_PORT) || 443,
+};
+
+export default {
+  ...base,
+  vite: {
+    ...(base.vite ?? {}),
+    server: { ...(base.vite?.server ?? {}), hmr },
+  },
+  integrations: [...list, aiAnalyzer({})],
+};
 `;
   writeFileSync(join(destDir, 'preview.config.mjs'), wrapper);
 
