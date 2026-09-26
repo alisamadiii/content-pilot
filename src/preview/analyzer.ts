@@ -81,8 +81,14 @@ const hmr = {
   clientPort: Number(process.env.PREVIEW_PUBLIC_PORT) || 443,
 };
 
+// Adapters are for builds; in dev the cloudflare adapter's platformProxy
+// spawns the glibc-only workerd binary, which cannot exec in the alpine
+// container. astro dev serves every route (incl. prerender=false endpoints)
+// in plain node without an adapter, so previews simply drop it.
+const { adapter: _adapter, ...rest } = base;
+
 export default {
-  ...base,
+  ...rest,
   vite: {
     ...(base.vite ?? {}),
     server: { ...(base.vite?.server ?? {}), hmr },
