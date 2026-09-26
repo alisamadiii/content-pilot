@@ -228,6 +228,21 @@ const spawnDevServer = (
   });
 };
 
+/**
+ * Tails a dev server's combined stdout/stderr. Without this, a server that
+ * dies at boot only ever reports "exited while starting" — the actual astro/
+ * vite error (bad config, missing binding, OOM) is the part that matters.
+ */
+const captureOutput = (child: ChildProcess) => {
+  let tail = '';
+  const push = (chunk: Buffer) => {
+    tail = (tail + chunk.toString()).slice(-3000);
+  };
+  child.stdout?.on('data', push);
+  child.stderr?.on('data', push);
+  return () => tail.trim();
+};
+
 const waitForReady = async (port: number, child: ChildProcess) => {
   const deadline = Date.now() + previewConfig.devReadyTimeoutMs;
   while (Date.now() < deadline) {
@@ -288,6 +303,7 @@ const attachCrashHandler = (session: LiveSession) => {
 export const startSession = async (row: SessionRow) => {
   if (live.has(row.id)) return;
   log(`session ${row.id}: starting for ${row.owner}/${row.repo}`);
+  let bootOutput: () => string = () => '';
   try {
     const dir = await syncRepo({
       repoId: row.repoId,
@@ -313,6 +329,7 @@ export const startSession = async (row: SessionRow) => {
 
     const port = await allocatePort();
     const child = spawnDevServer(appDir, port, configArg);
+    bootOutput = captureOutput(child);
     const session: LiveSession = {
       id: row.id,
       repoId: row.repoId,
@@ -333,10 +350,15 @@ export const startSession = async (row: SessionRow) => {
     await setStatus(row.id, 'ready', { port, pid: child.pid ?? null });
     log(`session ${row.id}: ready on :${port}`);
   } catch (error) {
+    // The dev server's own output tail is the actual diagnosis (astro/vite
+    // error, missing binding, OOM) — "exited while starting" alone is useless.
+    const tail = sanitize(bootOutput());
     const message = sanitize((error as Error).message || 'unknown error');
     const needsConfig = error instanceof AppDirConfigError;
     log(
-      `session ${row.id}: ${needsConfig ? 'needs config' : 'failed'} — ${message}`
+      `session ${row.id}: ${needsConfig ? 'needs config' : 'failed'} — ${message}${
+        tail ? `\n--- dev server output ---\n${tail}` : ''
+      }`
     );
     const session = live.get(row.id);
     if (session) {
@@ -349,7 +371,9 @@ export const startSession = async (row: SessionRow) => {
     await setStatus(row.id, needsConfig ? 'needs_config' : 'failed', {
       error: needsConfig
         ? message.slice(0, 500)
-        : `The preview could not start: ${message.slice(0, 500)}`,
+        : `The preview could not start: ${message.slice(0, 300)}${
+            tail ? ` — ${tail.slice(-300)}` : ''
+          }`,
     });
   }
 };
