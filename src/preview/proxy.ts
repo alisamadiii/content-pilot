@@ -44,6 +44,13 @@ export const startProxy = () => {
     changeOrigin: true,
   });
 
+  proxy.on('proxyRes', (proxyRes) => {
+    // Previews sit behind Cloudflare (orange cloud). Vite's dev server sends
+    // no cache-control, so CF edge-caches css/js by extension (4h default) and
+    // reloads serve pre-edit styles. no-store makes CF bypass every response.
+    proxyRes.headers['cache-control'] = 'no-store';
+  });
+
   proxy.on('error', (_error, _req, res) => {
     // Dev server mid-restart or just died — plain 502, the canvas retries.
     if (res && 'writeHead' in res && !res.headersSent) {
