@@ -3,10 +3,13 @@
  * ONLY inside the live-preview dev server. Inert unless the page is framed
  * (the hub is the only thing that ever frames the preview URL).
  *
- * It never writes anything and needs no token: on click of an editable element
- * it posts the element's source ref + text + page up to the hub, which attaches
- * that context to the next AI chat message so the AI edits the right file
- * without scanning the whole repo.
+ * Pick mode is OFF by default so the client can browse their site normally —
+ * a floating bottom-right button toggles it (state survives navigation via
+ * sessionStorage). While on, clicking an editable element posts its source
+ * ref + text + page up to the hub, which attaches that context to the next AI
+ * chat message so the AI edits the right file without scanning the repo.
+ * Every page load also posts a `preview-navigate` message so the hub's page
+ * tree follows in-frame navigation.
  */
 
 (function () {
@@ -18,6 +21,32 @@
     "h1,h2,h3,h4,h5,h6,p,span,a,button,img,li,blockquote,figcaption," +
     "label,input:not([type=hidden]):not([aria-hidden=true]),textarea";
   var ACCENT = "#4f7fff";
+  var STORE_KEY = "ai-analyzer-active";
+
+  function isActive() {
+    try {
+      return sessionStorage.getItem(STORE_KEY) === "1";
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function setActive(on) {
+    try {
+      sessionStorage.setItem(STORE_KEY, on ? "1" : "0");
+    } catch (err) {
+      /* storage unavailable — state just won't survive navigation */
+    }
+    syncUi();
+  }
+
+  function post(message) {
+    try {
+      window.parent.postMessage(message, "*");
+    } catch (err) {
+      /* cross-origin parent — nothing to do */
+    }
+  }
 
   function sourceRefFor(el) {
     var srcEl = el.closest("[data-cms-src]");
@@ -41,10 +70,32 @@
     return (el.textContent || "").replace(/\s+/g, " ").trim();
   }
 
-  var dot, hint;
+  var dot, hint, toggle;
+
+  // Cursor-arrow glyph for the toggle button.
+  var ICON =
+    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" ' +
+    'xmlns="http://www.w3.org/2000/svg"><path d="M4 3l7.6 18 2.3-7.6L21 11 4 3z" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linejoin="round" fill="none"/></svg>';
+
+  function syncUi() {
+    var on = isActive();
+    if (dot) dot.style.display = on ? "" : "none";
+    if (hint) hint.style.display = on ? "" : "none";
+    if (toggle) {
+      toggle.style.background = on ? ACCENT : "#fff";
+      toggle.style.color = on ? "#fff" : ACCENT;
+      toggle.setAttribute("aria-pressed", on ? "true" : "false");
+      toggle.title = on ? "Turn off element picking" : "Point the AI at an element";
+    }
+    if (!on) target = null;
+  }
 
   function makeOverlay() {
-    if (document.getElementById("ai-analyzer-dot")) return;
+    if (document.getElementById("ai-analyzer-dot")) {
+      syncUi();
+      return;
+    }
 
     dot = document.createElement("div");
     dot.id = "ai-analyzer-dot";
@@ -67,8 +118,33 @@
       "box-shadow:0 4px 16px rgba(0,0,0,.25);pointer-events:none;";
     hint.textContent = "Click any element to point the AI at it · ⌘-click to follow links";
 
+    toggle = document.createElement("button");
+    toggle.id = "ai-analyzer-toggle";
+    toggle.type = "button";
+    toggle.innerHTML = ICON;
+    toggle.style.cssText =
+      "position:fixed;bottom:16px;right:16px;z-index:2147483647;" +
+      "width:42px;height:42px;border-radius:50%;display:flex;align-items:center;" +
+      "justify-content:center;cursor:pointer;border:2px solid " +
+      ACCENT +
+      ";box-shadow:0 4px 16px rgba(0,0,0,.2);padding:0;" +
+      "transition:background .15s ease,color .15s ease,transform .1s ease;";
+    toggle.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      setActive(!isActive());
+    });
+    toggle.addEventListener("mousedown", function () {
+      toggle.style.transform = "scale(.92)";
+    });
+    toggle.addEventListener("mouseup", function () {
+      toggle.style.transform = "";
+    });
+
     document.body.appendChild(dot);
     document.body.appendChild(hint);
+    document.body.appendChild(toggle);
+    syncUi();
   }
 
   // ---------- hover morph animation ----------
@@ -112,7 +188,12 @@
     if (!(node instanceof Element)) return null;
     var el = node.closest(EDITABLE);
     if (!el || !el.closest("[data-cms-src]")) return null;
-    if (el.closest("#ai-analyzer-dot") || el.closest("#ai-analyzer-hint")) return null;
+    if (
+      el.closest("#ai-analyzer-dot") ||
+      el.closest("#ai-analyzer-hint") ||
+      el.closest("#ai-analyzer-toggle")
+    )
+      return null;
     return el;
   }
 
@@ -132,6 +213,7 @@
     document.addEventListener(
       "mouseover",
       function (e) {
+        if (!isActive()) return;
         var el = editableFrom(e.target);
         if (el) target = el;
       },
@@ -156,28 +238,23 @@
     document.addEventListener(
       "click",
       function (e) {
+        // Pick mode off → the page behaves normally (links navigate).
+        if (!isActive()) return;
         // ⌘/Ctrl-click passes through so the client can follow links.
         if (e.metaKey || e.ctrlKey) return;
         var el = editableFrom(e.target);
         if (!el) return;
         e.preventDefault();
         e.stopPropagation();
-        try {
-          window.parent.postMessage(
-            {
-              cms: 1,
-              v: 2,
-              type: "element-pick",
-              sourceRef: sourceRefFor(el),
-              elementText: elementTextFor(el).slice(0, 300),
-              pageUrl: location.href,
-              pagePath: location.pathname,
-            },
-            "*"
-          );
-        } catch (err) {
-          /* cross-origin parent — nothing to do */
-        }
+        post({
+          cms: 1,
+          v: 2,
+          type: "element-pick",
+          sourceRef: sourceRefFor(el),
+          elementText: elementTextFor(el).slice(0, 300),
+          pageUrl: location.href,
+          pagePath: location.pathname,
+        });
       },
       true
     );
@@ -189,6 +266,15 @@
     if (window.parent === window) return;
     makeOverlay();
     bindOnce();
+    // Sidebar sync: tell the hub which page the frame is on — every load,
+    // regardless of pick-mode state.
+    post({
+      cms: 1,
+      v: 2,
+      type: "preview-navigate",
+      pagePath: location.pathname,
+      pageUrl: location.href,
+    });
   }
 
   if (document.readyState === "loading") {
