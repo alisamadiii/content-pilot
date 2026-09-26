@@ -191,6 +191,10 @@ export const previewSession = pgTable(
     error: text('error'),
     requestedBy: text('requested_by'),
     lastActivityAt: timestamp('last_activity_at').notNull().defaultNow(),
+    // Set when the idle sweep emits a warning; cleared (via a fresh
+    // lastActivityAt) on the next user message. Guards the ~60s sweep against
+    // re-emitting the warning every pass.
+    idleWarnedAt: timestamp('idle_warned_at'),
     closedAt: timestamp('closed_at'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
@@ -244,6 +248,9 @@ export const PREVIEW_EVENT_TYPE_VALUES = [
   'commit',
   'message-done',
   'session-error',
+  // Idle sweep warns the client the session will expire soon; payload carries
+  // { expiresAt }. Emitted once per idle stretch (see previewSession.idleWarnedAt).
+  'session-idle-warning',
 ] as const;
 export type PreviewEventType = (typeof PREVIEW_EVENT_TYPE_VALUES)[number];
 

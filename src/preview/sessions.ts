@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'child_process';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { existsSync, readFileSync } from 'fs';
 import { rm } from 'fs/promises';
 import { createServer } from 'net';
@@ -11,7 +11,7 @@ import { discardChanges, sanitize, syncRepo } from '../worker/git';
 import { injectAnalyzer } from './analyzer';
 import { previewConfig, previewUrlFor } from './config';
 import { emitEvent } from './events';
-import { lastActivity, registerRoute, unregisterRoute } from './proxy';
+import { registerRoute, unregisterRoute } from './proxy';
 
 type SessionRow = typeof previewSession.$inferSelect;
 
@@ -381,18 +381,4 @@ export const teardownSession = async (
   // The SSE store is only needed while the session lives.
   await db.delete(previewEvent).where(eq(previewEvent.sessionId, id));
   log(`session ${id}: torn down (${status})`);
-};
-
-/** Flushes proxy activity to the DB so the idle sweep survives restarts. */
-export const flushActivity = async () => {
-  for (const [id, at] of lastActivity) {
-    // GREATEST: the web process also heartbeats lastActivityAt (transcript
-    // polling) — never let a stale in-memory proxy timestamp regress it.
-    await db
-      .update(previewSession)
-      .set({
-        lastActivityAt: sql`greatest(${previewSession.lastActivityAt}, ${new Date(at)})`,
-      })
-      .where(eq(previewSession.id, id));
-  }
 };

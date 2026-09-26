@@ -8,7 +8,6 @@ import { changedFiles, commitAndPush, discardChanges, sanitize } from '../worker
 import type { ClaudeUsage } from '../worker/runner';
 import { emitEvent, emitEvents } from './events';
 import { runSessionClaude } from './run-session-claude';
-import { lastActivity } from './proxy';
 import { liveSession } from './sessions';
 
 type MessageRow = typeof previewMessage.$inferSelect;
@@ -136,7 +135,12 @@ const finishMessage = async (
 const processMessage = async (row: MessageRow) => {
   const session = liveSession(row.sessionId);
   if (!session) return; // torn down between claim and run
-  lastActivity.set(row.sessionId, Date.now());
+  // Running a message is activity — bump the session so a long edit isn't
+  // reaped mid-run, and clear any pending idle warning.
+  await db
+    .update(previewSession)
+    .set({ lastActivityAt: new Date(), idleWarnedAt: null })
+    .where(eq(previewSession.id, row.sessionId));
 
   const [sessionRow] = await db
     .select()

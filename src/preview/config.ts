@@ -15,6 +15,10 @@ export const previewConfig = {
   portMax: Number(process.env.PREVIEW_PORT_MAX) || 4109,
   maxSessions: Number(process.env.MAX_PREVIEW_SESSIONS) || 3,
   idleMinutes: Number(process.env.SESSION_IDLE_MINUTES) || 30,
+  // Warn the client this many minutes before the idle kill (i.e. once the
+  // session has been idle for idleMinutes - idleWarnMinutes). Default 20 →
+  // warning fires at 10 min idle for a 30 min TTL.
+  idleWarnMinutes: Number(process.env.SESSION_IDLE_WARN_MINUTES) || 20,
   installTimeoutMs: Number(process.env.INSTALL_TIMEOUT_MS) || 300_000,
   devReadyTimeoutMs: Number(process.env.DEV_READY_TIMEOUT_MS) || 120_000,
   messageTimeoutMs: Number(process.env.SESSION_MESSAGE_TIMEOUT_MS) || 600_000,

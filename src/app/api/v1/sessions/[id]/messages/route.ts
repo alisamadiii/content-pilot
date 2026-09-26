@@ -87,10 +87,11 @@ export const POST = async (
     })
     .returning({ id: previewMessage.id });
 
-  // Chat is activity — keep the idle sweep away while the client is typing.
+  // Chat is the ONLY thing that counts as activity — reset the idle clock and
+  // clear any pending idle warning.
   await db
     .update(previewSession)
-    .set({ lastActivityAt: new Date() })
+    .set({ lastActivityAt: new Date(), idleWarnedAt: null })
     .where(eq(previewSession.id, id));
 
   try {

@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { db } from '@/db';
 import {
   PREVIEW_SESSION_LIVE_STATUSES,
@@ -8,7 +8,7 @@ import {
 } from '@/db/schema';
 import { previewConfig } from './config';
 import { pumpMessages } from './chat';
-import { lastActivity } from './proxy';
+import { emitEvent } from './events';
 import { liveIds, liveSession, startSession, teardownSession } from './sessions';
 
 const LIVE: PreviewSessionStatus[] = [...PREVIEW_SESSION_LIVE_STATUSES];
@@ -80,22 +80,58 @@ export const reconcileTick = async () => {
   await pumpMessages();
 };
 
-/** Expires sessions idle past the TTL. Preview hits + chat both count. */
+/**
+ * Warns sessions nearing the idle TTL, then expires those past it. Idleness is
+ * measured purely from lastActivityAt, which only a user message bumps — so
+ * merely viewing the preview no longer keeps a session alive.
+ */
 export const sweepIdle = async () => {
-  const cutoff = new Date(Date.now() - previewConfig.idleMinutes * 60_000);
-  const rows = await db
+  const now = Date.now();
+  const killCutoff = new Date(now - previewConfig.idleMinutes * 60_000);
+  const warnAfterMs =
+    Math.max(0, previewConfig.idleMinutes - previewConfig.idleWarnMinutes) *
+    60_000;
+  const warnCutoff = new Date(now - warnAfterMs);
+
+  // Warn the band that is idle enough to warn but not yet idle enough to kill,
+  // and that hasn't already been warned since its last activity.
+  const toWarn = await db
     .select()
     .from(previewSession)
     .where(
       and(
         inArray(previewSession.status, LIVE),
-        lt(previewSession.lastActivityAt, cutoff)
+        lt(previewSession.lastActivityAt, warnCutoff),
+        gte(previewSession.lastActivityAt, killCutoff),
+        or(
+          isNull(previewSession.idleWarnedAt),
+          lt(previewSession.idleWarnedAt, previewSession.lastActivityAt)
+        )
       )
     );
-  for (const row of rows) {
-    // In-memory activity may be fresher than the last DB flush.
-    const memory = lastActivity.get(row.id);
-    if (memory && memory > cutoff.getTime()) continue;
+  for (const row of toWarn) {
+    const expiresAt = new Date(
+      row.lastActivityAt.getTime() + previewConfig.idleMinutes * 60_000
+    );
+    await emitEvent(row.id, 'session-idle-warning', {
+      expiresAt: expiresAt.toISOString(),
+    });
+    await db
+      .update(previewSession)
+      .set({ idleWarnedAt: new Date() })
+      .where(eq(previewSession.id, row.id));
+  }
+
+  const toKill = await db
+    .select()
+    .from(previewSession)
+    .where(
+      and(
+        inArray(previewSession.status, LIVE),
+        lt(previewSession.lastActivityAt, killCutoff)
+      )
+    );
+  for (const row of toKill) {
     await teardownSession(row.id, 'expired');
   }
 };

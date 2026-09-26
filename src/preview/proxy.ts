@@ -13,18 +13,15 @@ import { previewConfig } from './config';
  */
 const routes = new Map<string, number>();
 
-// Touched on every proxied hit; sessions.ts flushes this to the DB and the
-// idle sweep reads it — a client just *looking* at the preview keeps it alive.
-export const lastActivity = new Map<string, number>();
-
+// Note: proxy traffic deliberately does NOT count as session activity. Idle
+// expiry is driven only by user messages (see messages route + chat.ts), so a
+// tab left open on the preview no longer keeps the dev server alive forever.
 export const registerRoute = (sessionId: string, port: number) => {
   routes.set(sessionId, port);
-  lastActivity.set(sessionId, Date.now());
 };
 
 export const unregisterRoute = (sessionId: string) => {
   routes.delete(sessionId);
-  lastActivity.delete(sessionId);
 };
 
 const sessionIdFromHost = (req: IncomingMessage) => {
@@ -69,7 +66,6 @@ export const startProxy = () => {
       res.end(endedPage);
       return;
     }
-    lastActivity.set(id, Date.now());
     proxy.web(req, res, { target: `http://127.0.0.1:${port}` });
   });
 
@@ -80,7 +76,6 @@ export const startProxy = () => {
       socket.destroy();
       return;
     }
-    lastActivity.set(id, Date.now());
     proxy.ws(req, socket, head, { target: `http://127.0.0.1:${port}` });
   });
 

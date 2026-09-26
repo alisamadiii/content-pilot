@@ -10,7 +10,6 @@ import {
   reconcileTick,
   sweepIdle,
 } from './reconcile';
-import { flushActivity } from './sessions';
 
 const execFileAsync = promisify(execFile);
 
@@ -60,7 +59,6 @@ const main = async () => {
       await reconcileTick();
       if (Date.now() - lastSlowPass > 60_000) {
         lastSlowPass = Date.now();
-        await flushActivity();
         await sweepIdle();
         await pruneOrphanEvents();
       }
