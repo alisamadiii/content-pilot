@@ -182,6 +182,25 @@ const SessionDetailPage = async ({
                   </div>
                 )}
               </div>
+              {/* Full failure diagnostic (verify problem, stderr tail) —
+                  admin-only; the client bubble carries a sanitized version. */}
+              {message.errorDetail && (
+                <div
+                  className="muted"
+                  style={{
+                    maxWidth: '72%',
+                    whiteSpace: 'pre-wrap',
+                    fontSize: 11.5,
+                    marginTop: 4,
+                    padding: '6px 10px',
+                    borderRadius: 8,
+                    border: '1px dashed var(--border)',
+                  }}
+                >
+                  <span style={{ fontWeight: 600 }}>diagnostic: </span>
+                  {message.errorDetail}
+                </div>
+              )}
               {/* Hub-supplied context (viewed page, picked element source ref)
                   prepended to the AI prompt — never shown to the client, but
                   gold for debugging which element a request targeted. */}

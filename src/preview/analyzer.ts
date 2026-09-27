@@ -89,6 +89,15 @@ const { adapter: _adapter, ...rest } = base;
 
 export default {
   ...rest,
+  // PREVIEW ONLY: allow any https remote image so client-pasted CDN URLs
+  // (Unsplash etc.) render instead of 500ing the page. The production build
+  // uses the real astro.config — remote URLs through astro:assets still need
+  // the real allowlist there; the session prompt steers the AI to plain <img>,
+  // which needs no allowlist in either environment.
+  image: {
+    ...(rest.image ?? {}),
+    remotePatterns: [...(rest.image?.remotePatterns ?? []), { protocol: 'https' }],
+  },
   vite: {
     ...(base.vite ?? {}),
     server: { ...(base.vite?.server ?? {}), hmr },

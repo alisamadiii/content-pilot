@@ -231,6 +231,9 @@ export const previewMessage = pgTable(
       .default('queued'),
     commitSha: text('commit_sha'),
     error: text('error'),
+    // Full diagnostic behind a failed message (verify problem, stderr tail).
+    // Admin dashboard only — never selected by client-facing routes.
+    errorDetail: text('error_detail'),
     model: text('model'),
     inputTokens: integer('input_tokens'),
     outputTokens: integer('output_tokens'),

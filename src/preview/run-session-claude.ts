@@ -12,6 +12,13 @@ export type SessionClaudeRun = {
   usage: ClaudeUsage;
   /** Tail of stderr — only meaningful when exitCode !== 0. */
   stderr: string;
+  /**
+   * True when the CLI emitted its final `result` event — the transcript is
+   * durably written and the run's session id is a safe `--resume` target.
+   * SIGKILL'd (timed-out) runs never emit it; persisting their session id
+   * would make the next message resume a conversation that doesn't exist.
+   */
+  gotResult: boolean;
 };
 
 /**
@@ -53,6 +60,7 @@ export const runSessionClaude = (params: {
     let resultText = '';
     let claudeSessionId = params.claudeSessionId;
     let timedOut = false;
+    let gotResult = false;
     const usage: ClaudeUsage = {
       model: null,
       inputTokens: null,
@@ -78,6 +86,7 @@ export const runSessionClaude = (params: {
         claudeSessionId = event.session_id;
       }
       if (event.type === 'result') {
+        gotResult = true;
         if (typeof event.result === 'string') {
           resultText = event.result;
         }
@@ -129,6 +138,7 @@ export const runSessionClaude = (params: {
         exitCode: 1,
         usage,
         stderr: error.message,
+        gotResult: false,
       });
     });
 
@@ -142,6 +152,7 @@ export const runSessionClaude = (params: {
         exitCode: code ?? 1,
         usage,
         stderr,
+        gotResult,
       });
     });
   });

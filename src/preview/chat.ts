@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { db } from '@/db';
@@ -6,7 +6,9 @@ import { previewMessage, previewSession } from '@/db/schema';
 import { findSessionForbiddenPaths } from '../worker/guardrails';
 import { changedFiles, commitAndPush, discardChanges, sanitize } from '../worker/git';
 import type { ClaudeUsage } from '../worker/runner';
+import { previewConfig } from './config';
 import { emitEvent, emitEvents } from './events';
+import { RECAP_MAX_MESSAGES, renderRecap, sanitizeForClient } from './recap';
 import { runSessionClaude } from './run-session-claude';
 import { liveSession } from './sessions';
 
@@ -23,11 +25,37 @@ const running = new Set<string>();
 const REJECTED_MESSAGE =
   'Thanks for your request! That change touched files the editor must not modify, so it was not applied. Please reach out to your developer and they will be happy to help.';
 
-const BROKE_PREVIEW_MESSAGE =
-  'That change broke the site preview, so it was undone — nothing was applied. Please try phrasing the request differently, or reach out to your developer.';
-
 /** Self-repair attempts when a change breaks the preview before giving up. */
 const MAX_REPAIR_RUNS = 2;
+
+/**
+ * Replays the durable DB transcript into the prompt when the CLI-side
+ * conversation is gone (stale --resume target, killed first run). Only
+ * finished turns — a queued/running row is the message being processed.
+ */
+const buildRecap = async (
+  sessionId: string,
+  beforeMessageId: number
+): Promise<string | null> => {
+  const rows = await db
+    .select({
+      role: previewMessage.role,
+      content: previewMessage.content,
+      status: previewMessage.status,
+      error: previewMessage.error,
+    })
+    .from(previewMessage)
+    .where(
+      and(
+        eq(previewMessage.sessionId, sessionId),
+        lt(previewMessage.id, beforeMessageId),
+        inArray(previewMessage.status, ['done', 'failed', 'rejected'])
+      )
+    )
+    .orderBy(desc(previewMessage.id))
+    .limit(RECAP_MAX_MESSAGES);
+  return renderRecap(rows.reverse());
+};
 
 /** Sums per-run AI usage across the initial run + repair runs. */
 const addUsage = (a: ClaudeUsage, b: ClaudeUsage): ClaudeUsage => ({
@@ -86,17 +114,32 @@ const verifyChanges = async (
       return `${file} is no longer valid JSON: ${(error as Error).message}`;
     }
   }
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}${pagePath}`, {
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (res.status >= 500) {
-      const body = await res.text().catch(() => '');
-      return `GET ${pagePath} now returns ${res.status}. Dev server error: ${stripHtml(body).slice(0, 600)}`;
+  const checkPage = async (path: string): Promise<string | null> => {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (res.status >= 500) {
+        const body = await res.text().catch(() => '');
+        return `GET ${path} now returns ${res.status}. Dev server error: ${stripHtml(body).slice(0, 600)}`;
+      }
+    } catch {
+      // Transient dev-server hiccup (restart, timeout) — don't block the
+      // commit on infrastructure noise; only concrete errors trigger a repair.
     }
-  } catch {
-    // Transient dev-server hiccup (restart, timeout) — don't block the commit
-    // on infrastructure noise; only concrete errors trigger a repair.
+    return null;
+  };
+  const problem = await checkPage(pagePath);
+  if (problem) return problem;
+  // Site-wide CMS files feed every page — a break there can miss the page the
+  // client is viewing, so also probe the home page. Other routes stay
+  // unchecked (known limitation; a full crawl per edit is too slow).
+  const touchedSharedCms = changed.some(
+    (file) =>
+      /(^|\/)(_site|_pages)\.json$/.test(file) || /(^|\/)_collections\//.test(file)
+  );
+  if (touchedSharedCms && pagePath !== '/') {
+    return checkPage('/');
   }
   return null;
 };
@@ -174,9 +217,16 @@ const processMessage = async (row: MessageRow) => {
     const prompt = row.context
       ? `${row.context}\n\n---\n\n${row.content}`
       : row.content;
+    // No resumable CLI session but prior finished messages exist (e.g. the
+    // first run was killed before writing its transcript) — replay the DB
+    // transcript so the fresh run keeps the conversation.
+    const withRecap = async (base: string) => {
+      const recap = await buildRecap(row.sessionId, row.id);
+      return recap ? `${recap}\n\n---\n\n${base}` : base;
+    };
     let run = await runSessionClaude({
       cwd: session.dir,
-      prompt,
+      prompt: sessionRow.claudeSessionId ? prompt : await withRecap(prompt),
       claudeSessionId: sessionRow.claudeSessionId,
       onEvent: (event) => {
         pending.push(event);
@@ -184,8 +234,9 @@ const processMessage = async (row: MessageRow) => {
     });
 
     // A --resume target can vanish (container recreated, CLI state pruned) —
-    // retry once without it; conversational context is lost but the request
-    // still runs.
+    // retry once without it, replaying the DB transcript as a recap so the
+    // conversation survives. No proactive resume validation: this reactive
+    // retry is the intended recovery path.
     if (
       !run.timedOut &&
       run.exitCode !== 0 &&
@@ -193,11 +244,11 @@ const processMessage = async (row: MessageRow) => {
       /no conversation found|session.*not found/i.test(run.stderr)
     ) {
       log(
-        `session ${row.sessionId}: stale claude session ${sessionRow.claudeSessionId} — retrying fresh`
+        `session ${row.sessionId}: stale claude session ${sessionRow.claudeSessionId} — retrying fresh with recap`
       );
       run = await runSessionClaude({
         cwd: session.dir,
-        prompt,
+        prompt: await withRecap(prompt),
         claudeSessionId: null,
         onEvent: (event) => {
           pending.push(event);
@@ -207,7 +258,13 @@ const processMessage = async (row: MessageRow) => {
 
     // Accumulated across the initial run and any self-repair runs below.
     let usage = { ...run.usage };
-    let claudeSessionId = run.claudeSessionId;
+    // A run that never emitted `result` (SIGKILL on timeout) may not have
+    // written its transcript — persisting its session id would point the next
+    // message's --resume at a conversation that doesn't exist. Keep the last
+    // known-good target instead.
+    let claudeSessionId = run.gotResult
+      ? run.claudeSessionId
+      : sessionRow.claudeSessionId;
     let resultText = run.resultText;
 
     const persistClaudeSessionId = async () => {
@@ -229,13 +286,20 @@ const processMessage = async (row: MessageRow) => {
       // Invariant: between messages the working tree equals the branch, so the
       // preview never shows edits that publish would not ship.
       await discardChanges(session.dir);
+      const stderrForClient = sanitizeForClient(run.stderr, session.dir).slice(
+        0,
+        300
+      );
       await finishMessage(
         row,
         {
           status: 'failed',
           error: run.timedOut
-            ? 'The edit took too long and was stopped. Please try a simpler request.'
-            : 'The AI could not complete this request. Please try again.',
+            ? `The edit took too long and was stopped after ${Math.round(previewConfig.messageTimeoutMs / 60000)} minutes, so nothing was applied. Please try a smaller or simpler request.`
+            : stderrForClient
+              ? `The AI could not complete this request, so nothing was applied.\n\nThe error was: ${stderrForClient}\n\nYou can try again, or share this error with your developer.`
+              : 'The AI could not complete this request. Please try again.',
+          errorDetail: sanitize(run.stderr) || null,
           ...usage,
         },
         null
@@ -288,7 +352,9 @@ const processMessage = async (row: MessageRow) => {
           },
         });
         usage = addUsage(usage, repair.usage);
-        if (repair.claudeSessionId) claudeSessionId = repair.claudeSessionId;
+        if (repair.gotResult && repair.claudeSessionId) {
+          claudeSessionId = repair.claudeSessionId;
+        }
         if (repair.resultText) resultText = repair.resultText;
         if (repair.timedOut || repair.exitCode !== 0) break;
         changed = await changedFiles(session.dir);
@@ -310,11 +376,22 @@ const processMessage = async (row: MessageRow) => {
         );
         await persistClaudeSessionId();
         await discardChanges(session.dir);
+        // The site owner asked to see the real error, so the client-facing
+        // message carries it (sanitized, capped) behind a plain-language why.
+        const why = problem.includes('is no longer valid JSON')
+          ? 'The change was undone because it made a content file invalid, which would have broken the site.'
+          : 'The change was undone because a page on your site stopped loading after it was applied.';
+        const detail = sanitizeForClient(problem, session.dir).slice(0, 500);
         // reply=null — the error row already carries the message; a matching
         // assistant bubble would just duplicate it in the transcript.
         await finishMessage(
           row,
-          { status: 'failed', error: BROKE_PREVIEW_MESSAGE, ...usage },
+          {
+            status: 'failed',
+            error: `${why}\n\nThe error was: ${detail}\n\nNothing was applied to your site. You can try rephrasing the request, or share this error with your developer.`,
+            errorDetail: sanitize(problem),
+            ...usage,
+          },
           null
         );
         return;
@@ -354,7 +431,8 @@ const processMessage = async (row: MessageRow) => {
       row,
       {
         status: 'failed',
-        error: `The change could not be completed: ${message.slice(0, 300)}`,
+        error: `The change could not be completed. The error was: ${sanitizeForClient(message, session.dir).slice(0, 300)}\n\nNothing was applied to your site. You can try again, or share this error with your developer.`,
+        errorDetail: message,
       },
       null
     );
