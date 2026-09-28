@@ -19,8 +19,28 @@ import {
   parseVerdicts,
   type Verdict,
 } from './guardrails';
-import { runClaude, type ClaudeRun } from './runner';
+import { runClaude, type ClaudeRun, type ClaudeUsage } from './runner';
+import { runTypecheck } from './typecheck';
 import { dispatchJobWebhooks } from './webhooks';
+
+// A broken edit gets a couple of self-repair passes (compiler output fed back
+// to Claude) before we give up and revert — mirrors the preview path's budget.
+const MAX_TYPECHECK_REPAIRS = 2;
+
+/** Accumulate repair-run token/cost into the lead's usage, in place. */
+const addUsage = (into: ClaudeUsage, extra: ClaudeUsage) => {
+  into.inputTokens = (into.inputTokens ?? 0) + (extra.inputTokens ?? 0);
+  into.outputTokens = (into.outputTokens ?? 0) + (extra.outputTokens ?? 0);
+  into.costUsd = (into.costUsd ?? 0) + (extra.costUsd ?? 0);
+  into.model = into.model ?? extra.model;
+};
+
+const buildTypecheckRepairPrompt = (output: string) =>
+  `Automated check: your last change did not pass the project's typecheck/build. ` +
+  `Fix the errors below without changing the intended behaviour of the edit. ` +
+  `If a symbol is used but undefined (e.g. a field read from data but missing ` +
+  `from its schema, or a missing import), add it in the correct place. ` +
+  `Do not ask questions — just repair it.\n\n${output}`;
 
 const execFileAsync = promisify(execFile);
 
@@ -161,17 +181,72 @@ const processBatch = async (jobs: Job[]) => {
 
   let sha: string | null = null;
   if (doneIds.length && !downgradeError) {
-    const summaries = doneIds.map((id) => {
-      const verdict = byId.get(id) as Extract<Verdict, { status: 'done' }>;
-      return `- ${verdict.summary} (job #${id})`;
-    });
-    const title =
-      doneIds.length === 1
-        ? `AI edit: ${(byId.get(doneIds[0]) as Extract<Verdict, { status: 'done' }>).summary} (job #${doneIds[0]})`
-        : `AI edits: ${doneIds.length} changes (jobs ${doneIds.map((id) => `#${id}`).join(', ')})`;
-    const message =
-      doneIds.length === 1 ? title : `${title}\n\n${summaries.join('\n')}`;
-    sha = await commitAndPush({ dir, branch: lead.branch, message });
+    // Typecheck gate: never ship an edit that breaks the build. On failure,
+    // feed the compiler output back to Claude and let it self-repair; if it
+    // still fails after the budget, revert and fail the batch. A repo with no
+    // typecheck script is skipped (see runTypecheck) so nothing is blocked.
+    let tc = await runTypecheck(dir, lead.repoId);
+    for (
+      let attempt = 1;
+      tc.status === 'fail' && attempt <= MAX_TYPECHECK_REPAIRS;
+      attempt++
+    ) {
+      log(
+        `batch #${lead.id}: typecheck failed (repair ${attempt}/${MAX_TYPECHECK_REPAIRS})`
+      );
+      const repair = await runClaude({
+        cwd: dir,
+        prompt: buildTypecheckRepairPrompt(tc.output),
+        unrestricted: lead.unrestricted,
+        onLog: (logs) => {
+          void db
+            .update(job)
+            .set({ logs, updatedAt: new Date() })
+            .where(eq(job.id, lead.id))
+            .then(
+              () => {},
+              () => {}
+            );
+        },
+      });
+      addUsage(run.usage, repair.usage);
+      if (repair.timedOut) break;
+      // A repair could wander into a forbidden path — re-check before trusting
+      // it. If it did, stop (tc stays 'fail') and let the revert path handle it.
+      const forbiddenNow = findForbiddenPaths(await changedFiles(dir), {
+        unrestricted: lead.unrestricted,
+      });
+      if (forbiddenNow.length) {
+        log(
+          `batch #${lead.id}: denylist hit during repair — ${forbiddenNow.join(', ')}`
+        );
+        break;
+      }
+      tc = await runTypecheck(dir, lead.repoId);
+    }
+
+    if (tc.status === 'skip') {
+      log(`batch #${lead.id}: typecheck skipped — ${tc.reason}`);
+    }
+
+    if (tc.status === 'fail') {
+      log(`batch #${lead.id}: typecheck still failing — reverting`);
+      await discardChanges(dir);
+      downgradeError =
+        'This change was undone because it introduced an error that would have broken the site. Please try rephrasing your request, or reach out to your developer.';
+    } else {
+      const summaries = doneIds.map((id) => {
+        const verdict = byId.get(id) as Extract<Verdict, { status: 'done' }>;
+        return `- ${verdict.summary} (job #${id})`;
+      });
+      const title =
+        doneIds.length === 1
+          ? `AI edit: ${(byId.get(doneIds[0]) as Extract<Verdict, { status: 'done' }>).summary} (job #${doneIds[0]})`
+          : `AI edits: ${doneIds.length} changes (jobs ${doneIds.map((id) => `#${id}`).join(', ')})`;
+      const message =
+        doneIds.length === 1 ? title : `${title}\n\n${summaries.join('\n')}`;
+      sha = await commitAndPush({ dir, branch: lead.branch, message });
+    }
   } else if (downgradeError) {
     await discardChanges(dir);
   }

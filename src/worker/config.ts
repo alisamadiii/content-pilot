@@ -21,12 +21,17 @@ export const config = {
   batchLimit: Number(process.env.BATCH_LIMIT) || 5,
   jobTimeoutMs: Number(process.env.JOB_TIMEOUT_MS) || 600_000,
   claudeBin: process.env.CLAUDE_BIN || 'claude',
-  // Simple content edits don't need a big model — haiku is fast and cheap.
+  // Simple content edits don't need a big model — haiku is fast and cheap. The
+  // post-edit typecheck gate catches the mistakes a smaller model makes.
   claudeModel: process.env.CLAUDE_MODEL || 'haiku',
   gitAuthorName: process.env.GIT_AUTHOR_NAME || 'AI Edit Bot',
   gitAuthorEmail: process.env.GIT_AUTHOR_EMAIL || 'ai-edits@localhost',
   staleRunningMinutes: Number(process.env.STALE_RUNNING_MINUTES) || 30,
   maxLogBytes: 100_000,
+  // Post-edit typecheck gate: installing deps in a fresh clone can be slow, so
+  // it gets a generous budget; the typecheck itself is bounded tighter.
+  depsInstallTimeoutMs: 300_000,
+  typecheckTimeoutMs: 180_000,
 };
 
 export const ensureWorkspace = () => {
