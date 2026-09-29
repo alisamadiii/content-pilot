@@ -9,7 +9,13 @@ import {
 import { previewConfig } from './config';
 import { pumpMessages } from './chat';
 import { emitEvent } from './events';
-import { liveIds, liveSession, startSession, teardownSession } from './sessions';
+import {
+  liveIds,
+  liveSession,
+  pauseSession,
+  startSession,
+  teardownSession,
+} from './sessions';
 
 const LIVE: PreviewSessionStatus[] = [...PREVIEW_SESSION_LIVE_STATUSES];
 
@@ -81,9 +87,10 @@ export const reconcileTick = async () => {
 };
 
 /**
- * Warns sessions nearing the idle TTL, then expires those past it. Idleness is
- * measured purely from lastActivityAt, which only a user message bumps — so
- * merely viewing the preview no longer keeps a session alive.
+ * Warns sessions nearing the idle TTL, then pauses those past it. Idleness is
+ * measured from lastActivityAt, bumped by user messages and by the hub's
+ * open-tab heartbeat — so a session winds down ~TTL after the tab closes.
+ * Pausing (not expiring) keeps the row, branch, and workspace revivable.
  */
 export const sweepIdle = async () => {
   const now = Date.now();
@@ -132,7 +139,7 @@ export const sweepIdle = async () => {
       )
     );
   for (const row of toKill) {
-    await teardownSession(row.id, 'expired');
+    await pauseSession(row.id);
   }
 };
 

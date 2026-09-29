@@ -145,6 +145,11 @@ export const PREVIEW_SESSION_STATUS_VALUES = [
   'installing',
   'ready',
   'restarting',
+  // Non-terminal, dormant: idle TTL hit — dev server killed and port freed,
+  // but the workspace clone, preview/<id> branch, events, and claudeSessionId
+  // are all retained. Revived by flipping back to 'starting' (project open or
+  // an incoming message). Not "live": paused rows own no port or process.
+  'paused',
   // Terminal, admin-fixable: the repo's site folder can't be resolved (no root
   // package.json + no app-folder override). Not "live" — a retry after the admin
   // sets the app folder makes a fresh session. The hub shows an "ask your admin"
@@ -187,6 +192,11 @@ export const previewSession = pgTable(
     // Claude Code CLI session id (from the stream-json init event); --resume
     // target so the chat keeps conversational context across messages.
     claudeSessionId: text('claude_session_id'),
+    // Latest cumulative total_cost_usd the SDK reported for the resumed
+    // conversation. Per-message cost is stored as the DELTA against this
+    // (the SDK's per-run total includes all prior messages), so summing
+    // message costs stays correct.
+    claudeCostUsd: doublePrecision('claude_cost_usd'),
     // Client-facing error when status = failed
     error: text('error'),
     requestedBy: text('requested_by'),

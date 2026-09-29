@@ -1,7 +1,8 @@
 import { spawn, type ChildProcess } from 'child_process';
+import { createHash } from 'crypto';
 import { eq } from 'drizzle-orm';
 import { existsSync, readFileSync } from 'fs';
-import { rm } from 'fs/promises';
+import { rm, writeFile } from 'fs/promises';
 import { createServer } from 'net';
 import { join } from 'path';
 import { db } from '@/db';
@@ -139,6 +140,19 @@ const findAppDir = (dir: string, override?: string | null) => {
 // Every client repo is npm now. `npm ci` only works with a package-lock.json
 // AND wipes node_modules, so it's reserved for cold dirs that actually have
 // one; everything else gets the incremental install.
+const INSTALL_HASH_MARKER = join('node_modules', '.cp-install-hash');
+
+const depsHash = (dir: string) => {
+  const source = existsSync(join(dir, 'package-lock.json'))
+    ? join(dir, 'package-lock.json')
+    : join(dir, 'package.json');
+  try {
+    return createHash('sha256').update(readFileSync(source)).digest('hex');
+  } catch {
+    return null;
+  }
+};
+
 const installDeps = async (dir: string) => {
   // Stale tree from before the fleet's pnpm → npm switch — npm can't
   // reconcile a .pnpm layout, so wipe and start clean.
@@ -146,6 +160,18 @@ const installDeps = async (dir: string) => {
     await rm(join(dir, 'node_modules'), { recursive: true, force: true });
   }
   const cold = !existsSync(join(dir, 'node_modules'));
+  // Warm revive fast-path: deps unchanged since the last successful install →
+  // skip npm entirely. This is what makes paused→ready take seconds.
+  const hash = depsHash(dir);
+  if (!cold && hash) {
+    try {
+      if (readFileSync(join(dir, INSTALL_HASH_MARKER), 'utf8').trim() === hash) {
+        return;
+      }
+    } catch {
+      // no marker yet — fall through to install
+    }
+  }
   const hasNpmLock = existsSync(join(dir, 'package-lock.json'));
   await run(
     'npm',
@@ -155,6 +181,9 @@ const installDeps = async (dir: string) => {
       timeoutMs: previewConfig.installTimeoutMs,
     }
   );
+  if (hash) {
+    await writeFile(join(dir, INSTALL_HASH_MARKER), hash).catch(() => {});
+  }
 };
 
 /** Host suffix the dev server must accept, derived from PREVIEW_URL_BASE. */
@@ -376,6 +405,32 @@ export const startSession = async (row: SessionRow) => {
           }`,
     });
   }
+};
+
+/**
+ * Idle TTL hit: kill the dev server and free its port, but keep everything a
+ * revive needs — the session row, workspace clone, node_modules, the pushed
+ * preview/<id> branch, event rows (SSE replay for a still-open tab), and the
+ * claudeSessionId. Reviving is just status → 'starting' + NOTIFY; the normal
+ * reconcile launch path does the rest against the warm workspace.
+ */
+export const pauseSession = async (id: string) => {
+  const session = live.get(id);
+  if (session) {
+    session.closing = true;
+    unregisterRoute(id);
+    session.child.kill('SIGTERM');
+    setTimeout(() => {
+      try {
+        session.child.kill('SIGKILL');
+      } catch {
+        // already gone
+      }
+    }, 5_000).unref();
+    live.delete(id);
+  }
+  await setStatus(id, 'paused', { port: null, pid: null });
+  log(`session ${id}: paused (idle)`);
 };
 
 export const teardownSession = async (

@@ -4,6 +4,7 @@ import { join } from 'path';
 import { db } from '@/db';
 import { previewMessage, previewSession } from '@/db/schema';
 import { findSessionForbiddenPaths } from '../worker/guardrails';
+import { aiUnavailableReason } from './ai-availability';
 import { changedFiles, commitAndPush, discardChanges, sanitize } from '../worker/git';
 import type { ClaudeUsage } from '../worker/runner';
 import { previewConfig } from './config';
@@ -57,7 +58,12 @@ const buildRecap = async (
   return renderRecap(rows.reverse());
 };
 
-/** Sums per-run AI usage across the initial run + repair runs. */
+/**
+ * Combines per-run AI usage across the initial run + repair runs. Tokens are
+ * per-run and add up; costUsd is the SDK's CUMULATIVE conversation total (a
+ * resumed run's total includes every prior run), so the latest value wins —
+ * adding would double count.
+ */
 const addUsage = (a: ClaudeUsage, b: ClaudeUsage): ClaudeUsage => ({
   model: b.model ?? a.model,
   inputTokens:
@@ -68,10 +74,7 @@ const addUsage = (a: ClaudeUsage, b: ClaudeUsage): ClaudeUsage => ({
     a.outputTokens === null && b.outputTokens === null
       ? null
       : (a.outputTokens ?? 0) + (b.outputTokens ?? 0),
-  costUsd:
-    a.costUsd === null && b.costUsd === null
-      ? null
-      : (a.costUsd ?? 0) + (b.costUsd ?? 0),
+  costUsd: b.costUsd ?? a.costUsd,
 });
 
 /** The page the client is viewing, from the hub-supplied message context. */
@@ -149,6 +152,26 @@ const finishMessage = async (
   fields: Partial<MessageRow>,
   reply: string | null
 ) => {
+  // The SDK's total_cost_usd is cumulative for the resumed conversation, so
+  // convert to a per-message delta against the session's last-seen total
+  // (a drop below it means the conversation restarted fresh — stale-resume
+  // recovery — and the run's total IS the message's cost).
+  if (typeof fields.costUsd === 'number') {
+    const cumulative = fields.costUsd;
+    const [session] = await db
+      .select({ claudeCostUsd: previewSession.claudeCostUsd })
+      .from(previewSession)
+      .where(eq(previewSession.id, row.sessionId));
+    const prev = session?.claudeCostUsd ?? 0;
+    fields = {
+      ...fields,
+      costUsd: cumulative >= prev ? cumulative - prev : cumulative,
+    };
+    await db
+      .update(previewSession)
+      .set({ claudeCostUsd: cumulative })
+      .where(eq(previewSession.id, row.sessionId));
+  }
   await db
     .update(previewMessage)
     .set({ ...fields, finishedAt: new Date() })
@@ -190,6 +213,24 @@ const processMessage = async (row: MessageRow) => {
     .from(previewSession)
     .where(eq(previewSession.id, row.sessionId));
   if (!sessionRow) return;
+  // The session enters the live map before its dev server finishes booting.
+  // Hold the message in `queued` until the session is actually ready so the
+  // verify step's page probe has a server to hit; the next tick retries.
+  if (sessionRow.status !== 'ready' && sessionRow.status !== 'restarting') {
+    return;
+  }
+
+  // Previews run without Anthropic; chat can't. Fail instantly with a clear
+  // reason instead of letting the SDK retry a missing/bad key for minutes.
+  const aiDown = aiUnavailableReason();
+  if (aiDown) {
+    await finishMessage(
+      row,
+      { status: 'failed', error: `${aiDown} The preview itself still works — contact your developer to enable AI editing.` },
+      null
+    );
+    return;
+  }
 
   await db
     .update(previewMessage)
@@ -241,7 +282,7 @@ const processMessage = async (row: MessageRow) => {
       !run.timedOut &&
       run.exitCode !== 0 &&
       sessionRow.claudeSessionId &&
-      /no conversation found|session.*not found/i.test(run.stderr)
+      /no conversation found|session.*not found|resume/i.test(run.stderr)
     ) {
       log(
         `session ${row.sessionId}: stale claude session ${sessionRow.claudeSessionId} — retrying fresh with recap`

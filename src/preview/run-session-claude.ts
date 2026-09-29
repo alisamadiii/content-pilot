@@ -1,5 +1,4 @@
-import { spawn } from 'child_process';
-import { config as workerConfig } from '../worker/config';
+import { query, AbortError } from '@anthropic-ai/claude-agent-sdk';
 import { SESSION_PROMPT } from '../worker/guardrails';
 import type { ClaudeUsage } from '../worker/runner';
 import { previewConfig } from './config';
@@ -10,85 +9,87 @@ export type SessionClaudeRun = {
   timedOut: boolean;
   exitCode: number;
   usage: ClaudeUsage;
-  /** Tail of stderr — only meaningful when exitCode !== 0. */
+  /** Tail of the failure message — only meaningful when exitCode !== 0. */
   stderr: string;
   /**
-   * True when the CLI emitted its final `result` event — the transcript is
-   * durably written and the run's session id is a safe `--resume` target.
-   * SIGKILL'd (timed-out) runs never emit it; persisting their session id
+   * True when the SDK emitted its final `result` message — the transcript is
+   * durably written and the run's session id is a safe `resume` target.
+   * Aborted (timed-out) runs never emit it; persisting their session id
    * would make the next message resume a conversation that doesn't exist.
    */
   gotResult: boolean;
 };
 
 /**
- * One chat message = one headless Claude run in the session's working tree.
- * `--resume` carries the conversation across messages; the session id comes
- * from the stream-json init event of the first run and is persisted on the
- * session row. Every assistant stream event is forwarded to `onEvent` so the
- * hub chat renders thinking/tool/text activity live.
+ * One chat message = one headless Agent SDK run in the session's working tree.
+ * `resume` carries the conversation across messages; the session id comes from
+ * the first run's messages and is persisted on the session row. Every
+ * assistant stream message is forwarded to `onEvent` so the hub chat renders
+ * thinking/tool/text activity live. Message shapes mirror the CLI's
+ * stream-json output, so the hub reducer needs no changes.
  */
-export const runSessionClaude = (params: {
+export const runSessionClaude = async (params: {
   cwd: string;
   prompt: string;
   claudeSessionId: string | null;
   onEvent: (event: unknown) => void;
 }): Promise<SessionClaudeRun> => {
-  return new Promise((resolve) => {
-    const args = [
-      '-p',
-      params.prompt,
-      '--model',
-      previewConfig.claudeModel,
-      '--append-system-prompt',
-      SESSION_PROMPT,
-      '--allowedTools',
-      'Read,Edit,Write,Glob,Grep',
-      '--output-format',
-      'stream-json',
-      '--include-partial-messages',
-      '--verbose',
-      ...(params.claudeSessionId ? ['--resume', params.claudeSessionId] : []),
-    ];
+  let resultText = '';
+  let claudeSessionId = params.claudeSessionId;
+  let timedOut = false;
+  let gotResult = false;
+  let failed = false;
+  let stderr = '';
+  const usage: ClaudeUsage = {
+    model: null,
+    inputTokens: null,
+    outputTokens: null,
+    costUsd: null,
+  };
 
-    const child = spawn(workerConfig.claudeBin, args, {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, previewConfig.messageTimeoutMs);
+
+  const run = query({
+    prompt: params.prompt,
+    options: {
       cwd: params.cwd,
-      env: process.env,
-    });
+      model: previewConfig.claudeModel,
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: SESSION_PROMPT },
+      allowedTools: ['Read', 'Edit', 'Write', 'Glob', 'Grep'],
+      // Hard backstop: acceptEdits only auto-approves edits; anything that
+      // could reach outside the working tree is removed from context entirely.
+      disallowedTools: ['Bash', 'WebFetch', 'WebSearch', 'Task'],
+      permissionMode: 'acceptEdits',
+      // Load the client repo's .claude/ tree (skills, commands) from cwd.
+      settingSources: ['project'],
+      // Auto-configures the Skill tool; without this the tool allowlist above
+      // would leave skill invocations un-approved in headless mode.
+      skills: 'all',
+      includePartialMessages: true,
+      resume: params.claudeSessionId ?? undefined,
+      abortController: controller,
+    },
+  });
 
-    let buffer = '';
-    let resultText = '';
-    let claudeSessionId = params.claudeSessionId;
-    let timedOut = false;
-    let gotResult = false;
-    const usage: ClaudeUsage = {
-      model: null,
-      inputTokens: null,
-      outputTokens: null,
-      costUsd: null,
-    };
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGKILL');
-    }, previewConfig.messageTimeoutMs);
-
-    const handleLine = (line: string) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-      let event: Record<string, unknown>;
-      try {
-        event = JSON.parse(trimmed);
-      } catch {
-        return;
+  try {
+    for await (const message of run) {
+      const sessionId = (message as { session_id?: unknown }).session_id;
+      if (typeof sessionId === 'string') {
+        claudeSessionId = sessionId;
       }
-      if (typeof event.session_id === 'string') {
-        claudeSessionId = event.session_id;
-      }
-      if (event.type === 'result') {
+      if (message.type === 'result') {
         gotResult = true;
+        const event = message as unknown as Record<string, unknown>;
         if (typeof event.result === 'string') {
           resultText = event.result;
+        }
+        if (event.is_error === true) {
+          failed = true;
+          stderr = typeof event.result === 'string' ? event.result : 'agent run errored';
         }
         const eventUsage = event.usage as
           | Record<string, number | undefined>
@@ -106,54 +107,31 @@ export const runSessionClaude = (params: {
         if (event.modelUsage && typeof event.modelUsage === 'object') {
           usage.model = Object.keys(event.modelUsage)[0] ?? null;
         }
-        return; // the pump emits its own message-done event
+        continue; // the pump emits its own message-done event
       }
       // Forward assistant activity: whole content blocks (tool_use) plus
       // partial-message deltas (thinking/text) for the live-typing feel.
       // Tool results and init noise stay server-side.
-      if (event.type === 'assistant' || event.type === 'stream_event') {
-        params.onEvent(event);
+      if (message.type === 'assistant' || message.type === 'stream_event') {
+        params.onEvent(message);
       }
-    };
+    }
+  } catch (error) {
+    failed = true;
+    if (!(error instanceof AbortError) && !timedOut) {
+      stderr = ((error as Error)?.message ?? 'agent sdk error').slice(-2000);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) handleLine(line);
-    });
-    let stderr = '';
-    child.stderr.on('data', (chunk: Buffer) => {
-      // Mostly progress noise in stream-json mode, but on a non-zero exit the
-      // tail is the only clue (auth failures, bad --resume target, ...).
-      stderr = (stderr + chunk.toString()).slice(-2000);
-    });
-
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      resolve({
-        resultText: '',
-        claudeSessionId,
-        timedOut: false,
-        exitCode: 1,
-        usage,
-        stderr: error.message,
-        gotResult: false,
-      });
-    });
-
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (buffer) handleLine(buffer);
-      resolve({
-        resultText,
-        claudeSessionId,
-        timedOut,
-        exitCode: code ?? 1,
-        usage,
-        stderr,
-        gotResult,
-      });
-    });
-  });
+  return {
+    resultText,
+    claudeSessionId,
+    timedOut,
+    exitCode: failed || timedOut ? 1 : 0,
+    usage,
+    stderr,
+    gotResult,
+  };
 };

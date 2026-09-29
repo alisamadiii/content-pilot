@@ -45,9 +45,13 @@ export const POST = async (
   if (auth.kind === 'edit-token' && auth.payload.repoId !== session.repoId) {
     return Response.json({ error: 'Forbidden' }, { status: 403, headers });
   }
-  if (session.status !== 'ready' && session.status !== 'restarting') {
+  // Messages are accepted for any revivable session and queue until the dev
+  // server is ready (the pump only runs against ready sessions). Only broken /
+  // finished sessions reject.
+  const TERMINAL = ['needs_config', 'failed', 'closed', 'published', 'expired'];
+  if (TERMINAL.includes(session.status)) {
     return Response.json(
-      { error: 'The preview is not ready yet. Please wait a moment.' },
+      { error: 'This editing session has ended. Please reopen the project to start a new one.' },
       { status: 409, headers }
     );
   }
@@ -87,11 +91,17 @@ export const POST = async (
     })
     .returning({ id: previewMessage.id });
 
-  // Chat is the ONLY thing that counts as activity — reset the idle clock and
-  // clear any pending idle warning.
+  // Chat counts as activity — reset the idle clock and clear any pending idle
+  // warning. A message to a paused session also revives it: flip to
+  // 'starting' so the supervisor relaunches the dev server, then the queued
+  // message runs once it's ready.
   await db
     .update(previewSession)
-    .set({ lastActivityAt: new Date(), idleWarnedAt: null })
+    .set({
+      lastActivityAt: new Date(),
+      idleWarnedAt: null,
+      ...(session.status === 'paused' ? { status: 'starting' as const, error: null } : {}),
+    })
     .where(eq(previewSession.id, id));
 
   try {

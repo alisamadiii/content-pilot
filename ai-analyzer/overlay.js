@@ -72,6 +72,23 @@
 
   var dot, hint, toggle;
 
+  // The hub can hide the floating toggle (it renders its own cursor button in
+  // the canvas header) and drive pick mode over postMessage. Hub builds that
+  // predate these messages simply never send them.
+  var launcherHidden = false;
+
+  window.addEventListener("message", function (e) {
+    if (e.source !== window.parent) return;
+    var d = e.data;
+    if (!d || d.cms !== 1 || typeof d.type !== "string") return;
+    if (d.type === "chrome") {
+      launcherHidden = d.launcher === "hidden";
+      syncUi();
+    } else if (d.type === "pick-mode") {
+      setActive(!!d.active);
+    }
+  });
+
   // Cursor-arrow glyph for the toggle button.
   var ICON =
     '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" ' +
@@ -83,6 +100,7 @@
     if (dot) dot.style.display = on ? "" : "none";
     if (hint) hint.style.display = on ? "" : "none";
     if (toggle) {
+      toggle.style.display = launcherHidden ? "none" : "";
       toggle.style.background = on ? ACCENT : "#fff";
       toggle.style.color = on ? "#fff" : ACCENT;
       toggle.setAttribute("aria-pressed", on ? "true" : "false");

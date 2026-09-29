@@ -1,7 +1,8 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { client } from '@/db';
-import { config as workerConfig, ensureWorkspace } from '../worker/config';
+import { ensureWorkspace } from '../worker/config';
+import { checkAiAvailability } from './ai-availability';
 import { previewConfig } from './config';
 import { startProxy } from './proxy';
 import {
@@ -36,11 +37,10 @@ const sleep = (ms: number) =>
 const main = async () => {
   ensureWorkspace();
   await execFileAsync('git', ['--version']);
-  await execFileAsync(workerConfig.claudeBin, ['--version']).catch(() => {
-    throw new Error(
-      `Claude Code CLI not found ("${workerConfig.claudeBin}"). Install it and run "claude login".`
-    );
-  });
+  // Previews don't need Anthropic — only chat runs do. A missing/invalid key
+  // never blocks boot; it just disables AI chat with an instant per-message
+  // error (see ai-availability.ts).
+  await checkAiAvailability(log);
 
   startProxy();
   log(

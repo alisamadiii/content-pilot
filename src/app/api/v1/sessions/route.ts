@@ -61,18 +61,20 @@ export const POST = async (request: Request) => {
   }
 
   // One live session per repo — a second start joins the existing session
-  // (two hub tabs / two collaborators share one preview).
+  // (two hub tabs / two collaborators share one preview). A paused session is
+  // joined too: it's revived below instead of creating a fresh one, so the
+  // branch, conversation, and any unpublished edits carry over.
   const [existing] = await db
     .select()
     .from(previewSession)
     .where(
       and(
         eq(previewSession.repoId, input.repoId),
-        inArray(previewSession.status, LIVE)
+        inArray(previewSession.status, [...LIVE, 'paused'])
       )
     )
     .limit(1);
-  if (existing) {
+  if (existing && existing.status !== 'paused') {
     return Response.json(publicSession(existing), { status: 200, headers });
   }
 
@@ -100,6 +102,29 @@ export const POST = async (request: Request) => {
       { error: 'All preview slots are busy right now. Please try again in a few minutes.' },
       { status: 429, headers }
     );
+  }
+
+  // Revive a paused session in place: flip back to 'starting' and let the
+  // supervisor relaunch against the warm workspace. Same slot accounting as a
+  // fresh session (checked above).
+  if (existing) {
+    const [revived] = await db
+      .update(previewSession)
+      .set({
+        status: 'starting',
+        error: null,
+        lastActivityAt: new Date(),
+        idleWarnedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(previewSession.id, existing.id))
+      .returning();
+    try {
+      await client.notify('cp_preview', '');
+    } catch {
+      // supervisor also polls
+    }
+    return Response.json(publicSession(revived), { status: 200, headers });
   }
 
   const resolved = await resolveRepo(input.repoId);
@@ -173,7 +198,7 @@ export const GET = async (request: Request) => {
     .where(
       and(
         eq(previewSession.repoId, repoId),
-        inArray(previewSession.status, [...LIVE, 'failed', 'needs_config'])
+        inArray(previewSession.status, [...LIVE, 'paused', 'failed', 'needs_config'])
       )
     )
     .orderBy(desc(previewSession.createdAt))

@@ -30,12 +30,15 @@ services:
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3010}
       GITHUB_PAT: ${GITHUB_PAT}
       WORKSPACE_DIR: /data/workspace
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-300000}
       JOB_TIMEOUT_MS: ${JOB_TIMEOUT_MS:-600000}
     ports:
       - '3010:3010'
     volumes:
       - workspace:/data/workspace
+      # Legacy CLI login state — sessions now auth via ANTHROPIC_API_KEY;
+      # volume kept only until the worker path is fully removed.
       - claude-config:/home/nextjs/.claude
 
 volumes:
