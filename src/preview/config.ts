@@ -25,6 +25,15 @@ export const previewConfig = {
   // Match the batch jobs model (haiku) — cheap + fast for content edits. Bump
   // via SESSION_CLAUDE_MODEL if a client's edits need a stronger model.
   claudeModel: process.env.SESSION_CLAUDE_MODEL || 'haiku',
+  // Gemini is the default provider for unpaid projects. 3.1 Flash-Lite is the
+  // cheap tier (1M context); plain `gemini-3.1-flash` is not offered on the
+  // Gemini API — only the `-lite` variant is callable. Override via env.
+  geminiModel: process.env.SESSION_GEMINI_MODEL || 'gemini-3.1-flash-lite',
+  // Gemini emits token counts, not dollars — cost is computed from these.
+  // Defaults track Gemini 3.1 Flash-Lite pricing (USD per 1M tokens); override
+  // per model via env.
+  geminiInPricePerM: Number(process.env.SESSION_GEMINI_IN_PRICE) || 0.15,
+  geminiOutPricePerM: Number(process.env.SESSION_GEMINI_OUT_PRICE) || 0.6,
 };
 
 export const previewUrlFor = (sessionId: string) =>

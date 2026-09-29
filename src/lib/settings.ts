@@ -40,6 +40,22 @@ export const getAppDir = async (repoId: number): Promise<string | null> => {
   return value;
 };
 
+export type AiProvider = 'claude' | 'gemini';
+
+/** Per-repo AI provider override key (e.g. `ai_provider:1247662764`). */
+export const providerKey = (repoId: number) => `ai_provider:${repoId}`;
+
+/**
+ * The AI provider a repo's chat sessions run on. Default is `gemini` (cheap) —
+ * every project uses it unless Ali explicitly flips this to `claude` for a
+ * paying client. Only the exact string `claude` selects Claude; anything else
+ * (unset, typo, legacy) falls back to gemini.
+ */
+export const getProvider = async (repoId: number): Promise<AiProvider> => {
+  const raw = (await getSetting(providerKey(repoId)))?.trim().toLowerCase();
+  return raw === 'claude' ? 'claude' : 'gemini';
+};
+
 export const MAX_SESSIONS_KEY = 'max_preview_sessions';
 const MAX_SESSIONS_CEILING = 20;
 

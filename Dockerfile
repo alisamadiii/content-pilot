@@ -14,7 +14,7 @@ RUN pnpm build
 FROM base AS runtime
 WORKDIR /app
 RUN apk add --no-cache git bash
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code @google/gemini-cli
 
 RUN addgroup -g 1001 nodejs && adduser -u 1001 -G nodejs -s /bin/sh -D nextjs
 

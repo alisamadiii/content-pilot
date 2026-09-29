@@ -7,7 +7,7 @@ import {
   previewSession,
 } from '@/db/schema';
 import { resolveRepo } from '@/lib/resolve-repo';
-import { getMaxSessions } from '@/lib/settings';
+import { getMaxSessions, getProvider } from '@/lib/settings';
 import {
   authenticateSessionRequest,
   newSessionId,
@@ -136,6 +136,9 @@ export const POST = async (request: Request) => {
   }
 
   const id = newSessionId();
+  // Provider is bound now and never re-read — a mid-life setting change only
+  // affects the next fresh session (resume ids are provider-specific).
+  const provider = await getProvider(input.repoId);
   const [created] = await db
     .insert(previewSession)
     .values({
@@ -145,6 +148,7 @@ export const POST = async (request: Request) => {
       repo: resolved.repo,
       branch: `preview/${id}`,
       status: 'starting',
+      provider,
       requestedBy: input.requestedBy,
     })
     .returning();

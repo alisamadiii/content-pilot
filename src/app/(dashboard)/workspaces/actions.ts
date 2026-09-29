@@ -13,7 +13,7 @@ import {
   PREVIEW_SESSION_LIVE_STATUSES,
 } from '@/db/schema';
 import { auth } from '@/lib/auth';
-import { appDirKey, setSetting } from '@/lib/settings';
+import { appDirKey, providerKey, setSetting } from '@/lib/settings';
 import { config } from '@/worker/config';
 
 const requireSession = async () => {
@@ -89,5 +89,22 @@ export const setAppDir = async (repoId: number, value: string) => {
     throw new Error('App folder must be a path inside the repo.');
   }
   await setSetting(appDirKey(repoId), cleaned);
+  revalidatePath('/workspaces');
+};
+
+/**
+ * Sets a repo's AI provider for future preview chat sessions. `gemini` (the
+ * default, cheap) for unpaid projects; `claude` for paying clients. Only
+ * affects sessions created after the change — provider is bound per session.
+ */
+export const setProvider = async (repoId: number, value: string) => {
+  await requireSession();
+  if (!Number.isInteger(repoId) || repoId <= 0) {
+    throw new Error('Invalid repo id.');
+  }
+  if (value !== 'claude' && value !== 'gemini') {
+    throw new Error('Provider must be claude or gemini.');
+  }
+  await setSetting(providerKey(repoId), value);
   revalidatePath('/workspaces');
 };

@@ -1,7 +1,51 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { deleteRepoClone, setAppDir } from './actions';
+import { deleteRepoClone, setAppDir, setProvider } from './actions';
+
+export const ProviderForm = ({
+  repoId,
+  value,
+}: {
+  repoId: number;
+  value: 'claude' | 'gemini';
+}) => {
+  const [pending, startTransition] = useTransition();
+  const [current, setCurrent] = useState<'claude' | 'gemini'>(value);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+      <select
+        value={current}
+        disabled={pending}
+        onChange={(e) => {
+          const next = e.target.value as 'claude' | 'gemini';
+          const prev = current;
+          setCurrent(next);
+          setError(null);
+          startTransition(async () => {
+            try {
+              await setProvider(repoId, next);
+            } catch (err) {
+              setCurrent(prev);
+              setError(err instanceof Error ? err.message : 'Could not save.');
+            }
+          });
+        }}
+        style={{ width: 110 }}
+      >
+        <option value="gemini">Gemini</option>
+        <option value="claude">Claude</option>
+      </select>
+      {pending && <span className="muted" style={{ fontSize: 12 }}>...</span>}
+      {error && (
+        <span className="error-text" style={{ fontSize: 12 }}>
+          {error}
+        </span>
+      )}
+    </div>
+  );
+};
 
 export const AppDirForm = ({
   repoId,

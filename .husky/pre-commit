@@ -1,0 +1,5 @@
+# content-pilot pre-commit: block a commit unless types + tests pass.
+echo "▶ content-pilot: typecheck"
+pnpm run typecheck || exit 1
+echo "▶ content-pilot: tests"
+pnpm test || exit 1

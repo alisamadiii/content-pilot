@@ -58,6 +58,8 @@ export const GET = async (
       commitSha: previewMessage.commitSha,
       error: previewMessage.error,
       createdAt: previewMessage.createdAt,
+      inputTokens: previewMessage.inputTokens,
+      outputTokens: previewMessage.outputTokens,
     })
     .from(previewMessage)
     .where(eq(previewMessage.sessionId, id))

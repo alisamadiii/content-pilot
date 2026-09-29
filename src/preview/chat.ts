@@ -11,7 +11,14 @@ import { previewConfig } from './config';
 import { emitEvent, emitEvents } from './events';
 import { RECAP_MAX_MESSAGES, renderRecap, sanitizeForClient } from './recap';
 import { runSessionClaude } from './run-session-claude';
+import { runSessionGemini } from './run-session-gemini';
 import { liveSession } from './sessions';
+import { addUsage, resolveMessageCost } from './usage';
+import {
+  buildPinnedFile,
+  isStaleResumeError,
+  pagePathFromContext,
+} from './prompt-context';
 
 type MessageRow = typeof previewMessage.$inferSelect;
 
@@ -56,36 +63,6 @@ const buildRecap = async (
     .orderBy(desc(previewMessage.id))
     .limit(RECAP_MAX_MESSAGES);
   return renderRecap(rows.reverse());
-};
-
-/**
- * Combines per-run AI usage across the initial run + repair runs. Tokens are
- * per-run and add up; costUsd is the SDK's CUMULATIVE conversation total (a
- * resumed run's total includes every prior run), so the latest value wins —
- * adding would double count.
- */
-const addUsage = (a: ClaudeUsage, b: ClaudeUsage): ClaudeUsage => ({
-  model: b.model ?? a.model,
-  inputTokens:
-    a.inputTokens === null && b.inputTokens === null
-      ? null
-      : (a.inputTokens ?? 0) + (b.inputTokens ?? 0),
-  outputTokens:
-    a.outputTokens === null && b.outputTokens === null
-      ? null
-      : (a.outputTokens ?? 0) + (b.outputTokens ?? 0),
-  costUsd: b.costUsd ?? a.costUsd,
-});
-
-/** The page the client is viewing, from the hub-supplied message context. */
-const pagePathFromContext = (context: string | null): string => {
-  const match = context?.match(/editing this page: (\S+)/);
-  if (!match) return '/';
-  try {
-    return new URL(match[1]).pathname || '/';
-  } catch {
-    return match[1].startsWith('/') ? match[1] : '/';
-  }
 };
 
 const stripHtml = (html: string) =>
@@ -150,26 +127,25 @@ const verifyChanges = async (
 const finishMessage = async (
   row: MessageRow,
   fields: Partial<MessageRow>,
-  reply: string | null
+  reply: string | null,
+  // Claude's total_cost_usd is CUMULATIVE for the resumed conversation; Gemini
+  // reports the per-message cost directly. Default cumulative (claude).
+  costIsCumulative = true
 ) => {
-  // The SDK's total_cost_usd is cumulative for the resumed conversation, so
-  // convert to a per-message delta against the session's last-seen total
-  // (a drop below it means the conversation restarted fresh — stale-resume
-  // recovery — and the run's total IS the message's cost).
   if (typeof fields.costUsd === 'number') {
-    const cumulative = fields.costUsd;
     const [session] = await db
       .select({ claudeCostUsd: previewSession.claudeCostUsd })
       .from(previewSession)
       .where(eq(previewSession.id, row.sessionId));
-    const prev = session?.claudeCostUsd ?? 0;
-    fields = {
-      ...fields,
-      costUsd: cumulative >= prev ? cumulative - prev : cumulative,
-    };
+    const { messageCost, newSessionTotal } = resolveMessageCost(
+      fields.costUsd,
+      session?.claudeCostUsd ?? 0,
+      costIsCumulative
+    );
+    fields = { ...fields, costUsd: messageCost };
     await db
       .update(previewSession)
-      .set({ claudeCostUsd: cumulative })
+      .set({ claudeCostUsd: newSessionTotal })
       .where(eq(previewSession.id, row.sessionId));
   }
   await db
@@ -220,9 +196,16 @@ const processMessage = async (row: MessageRow) => {
     return;
   }
 
-  // Previews run without Anthropic; chat can't. Fail instantly with a clear
-  // reason instead of letting the SDK retry a missing/bad key for minutes.
-  const aiDown = aiUnavailableReason();
+  // Provider is bound at session creation; every message in the session runs
+  // on the same agent (resume ids + cost accounting are provider-specific).
+  const provider = sessionRow.provider;
+  const runAgent =
+    provider === 'gemini' ? runSessionGemini : runSessionClaude;
+  const costIsCumulative = provider === 'claude';
+
+  // Previews run without an AI key; chat can't. Fail instantly with a clear
+  // reason instead of letting the agent retry a missing/bad key for minutes.
+  const aiDown = aiUnavailableReason(provider);
   if (aiDown) {
     await finishMessage(
       row,
@@ -237,8 +220,10 @@ const processMessage = async (row: MessageRow) => {
     .set({ status: 'running', startedAt: new Date() })
     .where(eq(previewMessage.id, row.id));
 
-  // Claude stream events are throttled into batched inserts so a chatty run
+  // Agent stream events are throttled into batched inserts so a chatty run
   // doesn't hammer Postgres; the SSE route replays them in order regardless.
+  // 120ms keeps streamed text feeling smooth/fast (v0-like) without a flush
+  // per token.
   let pending: unknown[] = [];
   const flush = async () => {
     const batch = pending;
@@ -250,13 +235,19 @@ const processMessage = async (row: MessageRow) => {
   };
   const flusher = setInterval(() => {
     if (pending.length) void flush();
-  }, 300);
+  }, 120);
 
   try {
     // The hub-supplied page/element context steers the AI straight to the file
     // (fewer tool calls); the client only ever sees `content` in the transcript.
+    // For element picks, inline the clicked file so the AI skips the reads.
+    const pinnedFile = await buildPinnedFile(
+      row.context,
+      session.dir,
+      session.appDir
+    );
     const prompt = row.context
-      ? `${row.context}\n\n---\n\n${row.content}`
+      ? `${row.context}${pinnedFile ? `\n\n${pinnedFile}` : ''}\n\n---\n\n${row.content}`
       : row.content;
     // No resumable CLI session but prior finished messages exist (e.g. the
     // first run was killed before writing its transcript) — replay the DB
@@ -265,10 +256,21 @@ const processMessage = async (row: MessageRow) => {
       const recap = await buildRecap(row.sessionId, row.id);
       return recap ? `${recap}\n\n---\n\n${base}` : base;
     };
-    let run = await runSessionClaude({
+
+    // Gemini's --resume re-sends the ENTIRE growing chat history every message
+    // (its implicit caching only discounts price, not the tokens sent/metered),
+    // so a long session's per-message input balloons (a 14th message hit ~313k
+    // for a one-line edit; baseline is ~13k). The idiomatic fix for serial
+    // independent edits is to NOT resume — run each message as a fresh
+    // conversation and rely on the DB recap for continuity, keeping every
+    // message near baseline. Claude caches history cheaply + resumes well, so
+    // it keeps resuming.
+    const resumeId = provider === 'gemini' ? null : sessionRow.claudeSessionId;
+
+    let run = await runAgent({
       cwd: session.dir,
-      prompt: sessionRow.claudeSessionId ? prompt : await withRecap(prompt),
-      claudeSessionId: sessionRow.claudeSessionId,
+      prompt: resumeId ? prompt : await withRecap(prompt),
+      claudeSessionId: resumeId,
       onEvent: (event) => {
         pending.push(event);
       },
@@ -281,13 +283,13 @@ const processMessage = async (row: MessageRow) => {
     if (
       !run.timedOut &&
       run.exitCode !== 0 &&
-      sessionRow.claudeSessionId &&
-      /no conversation found|session.*not found|resume/i.test(run.stderr)
+      resumeId &&
+      isStaleResumeError(run.stderr)
     ) {
       log(
-        `session ${row.sessionId}: stale claude session ${sessionRow.claudeSessionId} — retrying fresh with recap`
+        `session ${row.sessionId}: stale ${provider} session ${sessionRow.claudeSessionId} — retrying fresh with recap`
       );
-      run = await runSessionClaude({
+      run = await runAgent({
         cwd: session.dir,
         prompt: await withRecap(prompt),
         claudeSessionId: null,
@@ -319,7 +321,7 @@ const processMessage = async (row: MessageRow) => {
 
     if (run.timedOut || run.exitCode !== 0) {
       log(
-        `session ${row.sessionId}: message #${row.id} claude ${
+        `session ${row.sessionId}: message #${row.id} ${provider} ${
           run.timedOut ? 'timed out' : `exited ${run.exitCode}`
         } — ${sanitize(run.stderr).slice(0, 300) || '(no stderr)'}`
       );
@@ -384,7 +386,7 @@ const processMessage = async (row: MessageRow) => {
         log(
           `session ${row.sessionId}: preview broken after edit (repair ${attempt}/${MAX_REPAIR_RUNS}) — ${problem.slice(0, 200)}`
         );
-        const repair = await runSessionClaude({
+        const repair = await runAgent({
           cwd: session.dir,
           prompt: `Automated check: your last change broke the live preview.\n\n${problem}\n\nFix this now. Keep the requested change if possible, but the preview must render again. Do not ask questions — just repair it.`,
           claudeSessionId,
@@ -392,7 +394,7 @@ const processMessage = async (row: MessageRow) => {
             pending.push(event);
           },
         });
-        usage = addUsage(usage, repair.usage);
+        usage = addUsage(usage, repair.usage, !costIsCumulative);
         if (repair.gotResult && repair.claudeSessionId) {
           claudeSessionId = repair.claudeSessionId;
         }
@@ -433,7 +435,8 @@ const processMessage = async (row: MessageRow) => {
             errorDetail: sanitize(problem),
             ...usage,
           },
-          null
+          null,
+          costIsCumulative
         );
         return;
       }
@@ -455,7 +458,8 @@ const processMessage = async (row: MessageRow) => {
     await finishMessage(
       row,
       { status: 'done', commitSha: sha, ...usage },
-      resultText || 'Done.'
+      resultText || 'Done.',
+      costIsCumulative
     );
     log(
       `session ${row.sessionId}: message #${row.id} done${sha ? ` — ${sha.slice(0, 7)}` : ' (no changes)'}`

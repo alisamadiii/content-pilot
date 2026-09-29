@@ -186,11 +186,21 @@ export const previewSession = pgTable(
       .$type<PreviewSessionStatus>()
       .notNull()
       .default('starting'),
+    // AI provider for this session's chat runs, bound at creation from the
+    // per-repo `ai_provider:<repoId>` setting. Default gemini (cheap); flipped
+    // to claude per paying client. One provider per session — resume ids and
+    // cost accounting are provider-specific, so switching provider means a new
+    // session.
+    provider: text('provider')
+      .$type<'claude' | 'gemini'>()
+      .notNull()
+      .default('gemini'),
     // Dev-server runtime state, persisted for boot reconciliation
     port: integer('port'),
     pid: integer('pid'),
-    // Claude Code CLI session id (from the stream-json init event); --resume
-    // target so the chat keeps conversational context across messages.
+    // Agent CLI session id (Claude Code, or the Gemini CLI `init` event);
+    // --resume target so the chat keeps conversational context across
+    // messages. Provider-specific — one provider per session.
     claudeSessionId: text('claude_session_id'),
     // Latest cumulative total_cost_usd the SDK reported for the resumed
     // conversation. Per-message cost is stored as the DELTA against this
