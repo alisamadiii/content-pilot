@@ -27,13 +27,11 @@ const ReposPage = async () => {
   return (
     <>
       <h1>workspaces</h1>
-      <p className="subtitle">
-        derived from the workspace + job/session history
-      </p>
+      <p className="subtitle">repo clones on disk in the workspace folder</p>
       {rows.length === 0 ? (
         <div className="card muted">
-          No workspaces yet — a folder appears here once a job or session clones
-          the repo into the workspace.
+          No workspaces yet — a folder appears here once a session clones the
+          repo into the workspace.
         </div>
       ) : (
         <table>
@@ -43,8 +41,6 @@ const ReposPage = async () => {
               <th>owner</th>
               <th>repository</th>
               <th>branch</th>
-              <th>jobs</th>
-              <th>last job</th>
               <th>app folder</th>
               <th>ai</th>
               <th></th>
@@ -77,12 +73,6 @@ const ReposPage = async () => {
                     </a>
                   </td>
                   <td className="muted">{row.branch}</td>
-                  <td>{row.jobCount}</td>
-                  <td className="muted">
-                    {row.lastJobAt
-                      ? row.lastJobAt.toISOString().replace('T', ' ').slice(0, 19)
-                      : '—'}
-                  </td>
                   <td>
                     <AppDirForm
                       repoId={row.repoId}

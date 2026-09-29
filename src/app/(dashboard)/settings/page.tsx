@@ -87,24 +87,12 @@ const SettingsPage = async () => {
       </div>
 
       <div className="card">
-        <div style={{ marginBottom: 12, fontWeight: 600 }}>worker config</div>
+        <div style={{ marginBottom: 12, fontWeight: 600 }}>environment</div>
         <table>
           <tbody>
             <tr>
-              <td className="muted">poll interval</td>
-              <td>{Number(process.env.POLL_INTERVAL_MS) / 1000 || 60}s</td>
-            </tr>
-            <tr>
-              <td className="muted">job timeout</td>
-              <td>{Number(process.env.JOB_TIMEOUT_MS) / 1000 || 600}s</td>
-            </tr>
-            <tr>
               <td className="muted">workspace dir</td>
               <td>{process.env.WORKSPACE_DIR || './workspace'}</td>
-            </tr>
-            <tr>
-              <td className="muted">claude binary</td>
-              <td>{process.env.CLAUDE_BIN || 'claude'}</td>
             </tr>
             <tr>
               <td className="muted">github pat</td>

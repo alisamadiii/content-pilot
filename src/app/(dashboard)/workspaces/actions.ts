@@ -8,7 +8,6 @@ import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { db } from '@/db';
 import {
-  job,
   previewSession,
   PREVIEW_SESSION_LIVE_STATUSES,
 } from '@/db/schema';
@@ -25,9 +24,9 @@ const requireSession = async () => {
 
 /**
  * Permanently deletes a project's clone directory from the workspace. Guarded
- * against removing a tree that's in active use (a live preview session or a
- * running job), and path-checked so only a direct child of the workspace can
- * ever be removed — never a traversal target.
+ * against removing a tree that's in active use (a live preview session), and
+ * path-checked so only a direct child of the workspace can ever be removed —
+ * never a traversal target.
  */
 export const deleteRepoClone = async (repoId: number) => {
   await requireSession();
@@ -49,15 +48,6 @@ export const deleteRepoClone = async (repoId: number) => {
     throw new Error(
       'A live preview session is using this project. End it first, then delete.'
     );
-  }
-
-  const [runningJob] = await db
-    .select({ id: job.id })
-    .from(job)
-    .where(and(eq(job.repoId, repoId), eq(job.status, 'running')))
-    .limit(1);
-  if (runningJob) {
-    throw new Error('A job is running for this project. Wait for it to finish.');
   }
 
   // Path safety: resolve and confirm the target is a direct child of the

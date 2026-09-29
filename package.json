@@ -2,16 +2,14 @@
   "name": "content-pilot",
   "version": "0.1.0",
   "private": true,
-  "description": "Self-hosted AI content-edit runner: clients request changes, Claude Code applies them, git push deploys.",
+  "description": "Self-hosted AI content editor: clients chat with a live preview session, Claude/Gemini apply edits, git push deploys on publish.",
   "license": "MIT",
   "scripts": {
     "dev": "next dev -p 3010",
     "build": "next build",
     "start": "next start -p 3010",
-    "worker": "tsx src/worker/index.ts",
     "preview": "tsx src/preview/index.ts",
     "db:push": "drizzle-kit push",
-    "seed": "tsx scripts/seed-job.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/**/*.test.ts",
     "prepare": "husky || true"

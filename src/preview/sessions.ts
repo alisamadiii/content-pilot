@@ -6,9 +6,19 @@ import { rm, writeFile } from 'fs/promises';
 import { createServer } from 'net';
 import { join } from 'path';
 import { db } from '@/db';
-import { previewEvent, previewSession, type PreviewSessionStatus } from '@/db/schema';
+import {
+  previewEvent,
+  previewMessage,
+  previewSession,
+  type PreviewSessionStatus,
+} from '@/db/schema';
 import { getAppDir } from '@/lib/settings';
-import { discardChanges, sanitize, syncRepo } from '../worker/git';
+import {
+  discardChanges,
+  resetBranchToDefault,
+  sanitize,
+  syncRepo,
+} from '../worker/git';
 import { injectAnalyzer } from './analyzer';
 import { previewConfig, previewUrlFor } from './config';
 import { emitEvent } from './events';
@@ -431,6 +441,33 @@ export const pauseSession = async (id: string) => {
   }
   await setStatus(id, 'paused', { port: null, pid: null });
   log(`session ${id}: paused (idle)`);
+};
+
+/**
+ * "Discard": throws away every change from this session and returns the preview
+ * to production. Resets preview/<id> to origin/main, wipes the AI context +
+ * transcript, and keeps the session live — the dev server HMRs the reverted
+ * files, no teardown. Called from reconcile only when the session isn't
+ * mid-message (see sessionBusy guard).
+ */
+export const resetSession = async (row: SessionRow) => {
+  const session = live.get(row.id);
+  if (!session) return;
+  log(`session ${row.id}: resetting to production`);
+  await resetBranchToDefault({ dir: session.dir, branch: row.branch });
+  // Clear the resumed AI context and the whole transcript (also drops any
+  // queued messages, so nothing re-applies on top of the reset).
+  await db.delete(previewMessage).where(eq(previewMessage.sessionId, row.id));
+  await db
+    .update(previewSession)
+    .set({
+      resetRequestedAt: null,
+      claudeSessionId: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(previewSession.id, row.id));
+  await emitEvent(row.id, 'reset', {});
+  log(`session ${row.id}: reset complete`);
 };
 
 export const teardownSession = async (

@@ -1,6 +1,6 @@
 import { query, AbortError } from '@anthropic-ai/claude-agent-sdk';
 import { SESSION_PROMPT } from '../worker/guardrails';
-import type { ClaudeUsage } from '../worker/runner';
+import type { ClaudeUsage } from './usage';
 import { previewConfig } from './config';
 
 export type SessionClaudeRun = {
@@ -33,6 +33,8 @@ export const runSessionClaude = async (params: {
   prompt: string;
   claudeSessionId: string | null;
   onEvent: (event: unknown) => void;
+  /** External abort (user "pause"); aborts the run without the timeout label. */
+  signal?: AbortSignal;
 }): Promise<SessionClaudeRun> => {
   let resultText = '';
   let claudeSessionId = params.claudeSessionId;
@@ -52,6 +54,12 @@ export const runSessionClaude = async (params: {
     timedOut = true;
     controller.abort();
   }, previewConfig.messageTimeoutMs);
+  // User "pause": abort the run. `timedOut` stays false so the caller can tell
+  // a pause apart from a timeout (the external signal is the source of truth).
+  if (params.signal) {
+    if (params.signal.aborted) controller.abort();
+    else params.signal.addEventListener("abort", () => controller.abort());
+  }
 
   const run = query({
     prompt: params.prompt,

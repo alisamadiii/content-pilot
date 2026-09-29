@@ -8,10 +8,16 @@ import {
 } from '@/lib/session-auth';
 import { previewConfig, previewUrlFor } from '@/preview/config';
 
-const closeSchema = z.object({
-  action: z.literal('close'),
-  reason: z.enum(['discard', 'published']).optional(),
-});
+const actionSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('close'),
+    reason: z.enum(['discard', 'published']).optional(),
+  }),
+  // Discard: reset the preview branch to production main, keep the session live.
+  z.object({ action: z.literal('reset') }),
+  // Pause: abort the in-flight AI run, keep the session live.
+  z.object({ action: z.literal('cancel') }),
+]);
 
 const loadAuthorized = async (request: Request, id: string) => {
   const auth = await authenticateSessionRequest(request);
@@ -92,13 +98,45 @@ export const POST = async (
   if ('error' in result) {
     return Response.json({ error: 'Not available' }, { status: result.error, headers });
   }
-  const parsed = closeSchema.safeParse(await request.json().catch(() => null));
+  const parsed = actionSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return Response.json({ error: 'Invalid body' }, { status: 400, headers });
   }
 
-  // The API only writes the desired terminal state; the supervisor notices
-  // and kills the dev server / prunes events on its next reconcile pass.
+  // The API only writes intent; the supervisor acts on its next reconcile pass.
+  if (parsed.data.action === 'reset') {
+    // Keep the session live (status unchanged) + reset the idle clock; the
+    // supervisor resets the branch to production and clears context/transcript.
+    await db
+      .update(previewSession)
+      .set({
+        resetRequestedAt: new Date(),
+        lastActivityAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(previewSession.id, id));
+    try {
+      await client.notify('cp_preview', '');
+    } catch {
+      // supervisor also polls
+    }
+    return Response.json({ id, reset: true }, { status: 200, headers });
+  }
+
+  if (parsed.data.action === 'cancel') {
+    // Signal the supervisor to abort the in-flight run; it clears the flag.
+    await db
+      .update(previewSession)
+      .set({ cancelRequestedAt: new Date(), updatedAt: new Date() })
+      .where(eq(previewSession.id, id));
+    try {
+      await client.notify('cp_preview', '');
+    } catch {
+      // supervisor also polls
+    }
+    return Response.json({ id, canceled: true }, { status: 200, headers });
+  }
+
   const status = parsed.data.reason === 'published' ? 'published' : 'closed';
   await db
     .update(previewSession)

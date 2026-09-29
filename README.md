@@ -1,30 +1,31 @@
 # content-pilot
 
-Self-hosted AI content-edit runner. Clients (or you) submit plain-text edit requests for a website repo; a worker picks them up, runs [Claude Code](https://claude.com/claude-code) headless inside a clone of the repo, applies **content-only** changes (text, images, CMS JSON), commits and pushes to GitHub. Your existing CI/CD deploys the change.
+Self-hosted AI website editor. A client opens a **live preview session** for their website repo and chats with an AI editor while watching the changes render in real time; on publish the edits are committed and pushed to GitHub, and your existing CI/CD deploys them.
 
-- **Dashboard** — jobs with full Claude logs, repos, API keys. Single admin account.
-- **API** — `x-api-key`-secured endpoints so your own dashboard/app can create jobs and read history.
-- **Worker** — polls the database, one Claude invocation per job, hard guardrails:
-  - Claude gets read/edit tools only — the worker itself does all git operations.
-  - Requests outside content editing (new pages, redesigns, config changes) are rejected with a client-friendly reason.
-  - A path denylist reverts any change touching `package.json`, lockfiles, `.github/`, configs, etc.
+- **Dashboard** — live sessions with full transcripts, workspaces, API keys. Single admin account.
+- **API** — `x-api-key` (server-to-server) or short-lived edit-token (client site) secured endpoints to open sessions, send messages, and stream events.
+- **Preview supervisor** — one ephemeral dev server + AI chat per repo, with guardrails:
+  - Content-only editing scope; the AI edits inside a clone, the supervisor does all git operations.
+  - Secrets, lockfiles, `package.json`, and `.github/` are blocked from any commit.
+  - Per-repo provider: Gemini by default (cheap), Claude for paying clients.
 
 ## Requirements
 
 - Postgres
-- `git` and the Claude Code CLI (`npm i -g @anthropic-ai/claude-code`) available to the worker, with `claude login` completed (or an API key configured for Claude Code)
+- `git` and access to the AI provider (Claude Agent SDK via API key, or the Gemini CLI) available to the supervisor
 - A GitHub fine-grained PAT with Contents read/write on the target repos
 
 ## Local development
 
+Previews need TWO processes running side by side — the web app and the preview supervisor:
+
 ```sh
 pnpm install
 docker compose up -d db          # Postgres on :5433
-cp .env.example .env             # fill GITHUB_PAT, BETTER_AUTH_SECRET
+cp .env.example .env             # fill GITHUB_PAT, BETTER_AUTH_SECRET, provider keys
 pnpm db:push                     # create tables
 pnpm dev                         # dashboard on http://localhost:3010
-pnpm worker                      # poll loop (separate terminal)
-pnpm seed <repoId> <owner> <repo> main "Change the hero headline to X"
+pnpm preview                     # preview supervisor (separate terminal) — REQUIRED, or sessions hang at "starting"
 ```
 
 Get a repo's id: `gh api repos/<owner>/<repo> --jq .id`
@@ -40,30 +41,28 @@ ghcr.io/<owner>/content-pilot:latest
 ```
 
 1. Create a Postgres resource and a new service from the image above.
-2. Set env vars: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` (public URL), `GITHUB_PAT`.
+2. Set env vars: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` (public URL), `GITHUB_PAT`, `EDIT_TOKEN_SECRET` (shared with the hub), and the provider keys.
 3. Attach two persistent volumes:
    - `/data/workspace` — repo clones
-   - `/home/nextjs/.claude` — Claude CLI auth
+   - `/home/nextjs/.claude` — provider auth
 4. Deploy, open the URL, create the admin account, generate an API key.
-5. One-time Claude auth inside the container:
-   `docker exec -it <container> claude login`
 
-The container runs schema sync (`drizzle-kit push`), the worker, and the web server; if either process dies the container exits and your orchestrator restarts it.
+The container runs schema sync (`drizzle-kit push`), the preview supervisor, and the web server; if either process dies the container exits and your orchestrator restarts it.
 
 ## API
 
-All endpoints require the `x-api-key` header (create keys in Settings).
+Endpoints accept either an `x-api-key` header (server-to-server) or a Bearer edit-token minted by the hub for a specific repo (client site). CORS is open — the edit-token is the security boundary.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| POST | `/api/v1/jobs` | Create a job: `{ repoId, owner, repo, branch?, prompt, requesterId?, requestedBy? }` |
-| GET | `/api/v1/jobs?repoId=&requesterId=&limit=` | List jobs (newest first, no logs) |
-| GET | `/api/v1/jobs/:id` | Single job status |
-| DELETE | `/api/v1/jobs/:id` | Cancel a job while still queued |
+| POST | `/api/v1/sessions` | Create or join a live session: `{ repoId, requestedBy? }` |
+| GET | `/api/v1/sessions?repoId=` | Current session for a repo (omit `repoId`, api-key only, for all live sessions) |
+| GET | `/api/v1/sessions/:id` | Session status |
+| POST | `/api/v1/sessions/:id/messages` | Send a chat message (queues an AI edit turn) |
+| GET | `/api/v1/sessions/:id/events` | SSE stream of status / chat / commit events (resumable via `Last-Event-ID`) |
+| POST | `/api/v1/sessions/:id/heartbeat` | Keep the session alive |
 
-Job statuses: `queued → running → done | rejected | failed` (plus `canceled`).
-
-`rejected` means the AI declined the request (out of scope) — the `error` field contains a client-friendly explanation you can show directly to end users.
+Session statuses: `starting → installing → ready` (live); `paused` when idle-parked; `needs_config` when the site folder can't be resolved; plus `failed`, `closed`, `published`, `expired`.
 
 ## License
 

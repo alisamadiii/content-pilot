@@ -1,7 +1,7 @@
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { SESSION_PROMPT } from '../worker/guardrails';
-import type { ClaudeUsage } from '../worker/runner';
+import type { ClaudeUsage } from './usage';
 import type { SessionClaudeRun } from './run-session-claude';
 import { previewConfig } from './config';
 import { GEMINI_POLICY_PATH } from './gemini-setup';
@@ -230,6 +230,8 @@ export const runSessionGemini = async (params: {
   prompt: string;
   claudeSessionId: string | null;
   onEvent: (event: unknown) => void;
+  /** External abort (user "pause"); kills the child without the timeout label. */
+  signal?: AbortSignal;
 }): Promise<SessionClaudeRun> => {
   let resultText = '';
   let streamedText = '';
@@ -277,6 +279,19 @@ export const runSessionGemini = async (params: {
     timedOut = true;
     child.kill('SIGKILL');
   }, previewConfig.messageTimeoutMs);
+  // User "pause": kill the child. `timedOut` stays false so the caller can tell
+  // a pause apart from a timeout.
+  const onAbort = () => {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // already gone
+    }
+  };
+  if (params.signal) {
+    if (params.signal.aborted) onAbort();
+    else params.signal.addEventListener('abort', onAbort);
+  }
 
   // Gemini's system prompt can't be appended (only fully replaced via
   // GEMINI_SYSTEM_MD, which would drop the CLI's own coding instructions), so

@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { client, db } from '@/db';
 import {
   PREVIEW_SESSION_LIVE_STATUSES,
-  job,
   previewSession,
 } from '@/db/schema';
 import { resolveRepo } from '@/lib/resolve-repo';
@@ -76,21 +75,6 @@ export const POST = async (request: Request) => {
     .limit(1);
   if (existing && existing.status !== 'paused') {
     return Response.json(publicSession(existing), { status: 200, headers });
-  }
-
-  // The batch worker and a session must never share a working tree. New
-  // batches are blocked by the claim guard; a batch already running blocks
-  // session creation instead.
-  const [runningJob] = await db
-    .select({ id: job.id })
-    .from(job)
-    .where(and(eq(job.repoId, input.repoId), eq(job.status, 'running')))
-    .limit(1);
-  if (runningJob) {
-    return Response.json(
-      { error: 'An automatic edit is currently running for this site. Please try again in a minute.' },
-      { status: 409, headers }
-    );
   }
 
   const activeRows = await db

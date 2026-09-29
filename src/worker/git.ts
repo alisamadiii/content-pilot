@@ -141,6 +141,23 @@ export const discardChanges = async (dir: string) => {
   await git(dir, ['clean', '-fd']);
 };
 
+/**
+ * Discards everything on `branch` (committed history + working tree) and points
+ * it back at the latest production default branch, then force-pushes so the
+ * remote preview branch matches. Used by "discard session": the running dev
+ * server HMRs the reverted files, no restart.
+ */
+export const resetBranchToDefault = async (params: {
+  dir: string;
+  branch: string;
+}) => {
+  await git(params.dir, ['fetch', 'origin', '--prune'], true);
+  const base = await defaultBranch(params.dir);
+  await git(params.dir, ['checkout', '-B', params.branch, `origin/${base}`]);
+  await git(params.dir, ['clean', '-fd']);
+  await git(params.dir, ['push', '--force', 'origin', params.branch], true);
+};
+
 export const commitAndPush = async (params: {
   dir: string;
   branch: string;

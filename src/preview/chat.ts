@@ -6,7 +6,7 @@ import { previewMessage, previewSession } from '@/db/schema';
 import { findSessionForbiddenPaths } from '../worker/guardrails';
 import { aiUnavailableReason } from './ai-availability';
 import { changedFiles, commitAndPush, discardChanges, sanitize } from '../worker/git';
-import type { ClaudeUsage } from '../worker/runner';
+import type { ClaudeUsage } from './usage';
 import { previewConfig } from './config';
 import { emitEvent, emitEvents } from './events';
 import { RECAP_MAX_MESSAGES, renderRecap, sanitizeForClient } from './recap';
@@ -29,6 +29,18 @@ const log = (message: string) => {
 // One Claude run per session at a time; other sessions' messages run in
 // parallel with it.
 const running = new Set<string>();
+
+// Abort handle for the in-flight run of each session, so a user "pause" can
+// stop it mid-run. Set while a message runs, cleared when it finishes.
+const controllers = new Map<string, AbortController>();
+
+/** Pause the session's in-flight AI run, if any. Returns whether one existed. */
+export const cancelSession = (sessionId: string): boolean => {
+  const controller = controllers.get(sessionId);
+  if (!controller) return false;
+  controller.abort();
+  return true;
+};
 
 const REJECTED_MESSAGE =
   'Thanks for your request! That change touched files the editor must not modify, so it was not applied. Please reach out to your developer and they will be happy to help.';
@@ -220,6 +232,10 @@ const processMessage = async (row: MessageRow) => {
     .set({ status: 'running', startedAt: new Date() })
     .where(eq(previewMessage.id, row.id));
 
+  // Abort handle for a user "pause" — passed to every agent run below.
+  const cancelController = new AbortController();
+  controllers.set(row.sessionId, cancelController);
+
   // Agent stream events are throttled into batched inserts so a chatty run
   // doesn't hammer Postgres; the SSE route replays them in order regardless.
   // 120ms keeps streamed text feeling smooth/fast (v0-like) without a flush
@@ -271,6 +287,7 @@ const processMessage = async (row: MessageRow) => {
       cwd: session.dir,
       prompt: resumeId ? prompt : await withRecap(prompt),
       claudeSessionId: resumeId,
+      signal: cancelController.signal,
       onEvent: (event) => {
         pending.push(event);
       },
@@ -293,10 +310,27 @@ const processMessage = async (row: MessageRow) => {
         cwd: session.dir,
         prompt: await withRecap(prompt),
         claudeSessionId: null,
+        signal: cancelController.signal,
         onEvent: (event) => {
           pending.push(event);
         },
       });
+    }
+
+    // User paused mid-run: revert the partial edit and stop cleanly (distinct
+    // from a timeout/error — the external abort signal is the tell).
+    if (cancelController.signal.aborted) {
+      await discardChanges(session.dir);
+      await finishMessage(
+        row,
+        {
+          status: 'failed',
+          error:
+            "You paused this request, so nothing was applied. Send a new request whenever you're ready.",
+        },
+        null
+      );
+      return;
     }
 
     // Accumulated across the initial run and any self-repair runs below.
@@ -390,6 +424,7 @@ const processMessage = async (row: MessageRow) => {
           cwd: session.dir,
           prompt: `Automated check: your last change broke the live preview.\n\n${problem}\n\nFix this now. Keep the requested change if possible, but the preview must render again. Do not ask questions — just repair it.`,
           claudeSessionId,
+          signal: cancelController.signal,
           onEvent: (event) => {
             pending.push(event);
           },
@@ -485,6 +520,7 @@ const processMessage = async (row: MessageRow) => {
     // Lives until here so repair runs stream their activity live too.
     clearInterval(flusher);
     if (pending.length) await flush();
+    controllers.delete(row.sessionId);
   }
 };
 

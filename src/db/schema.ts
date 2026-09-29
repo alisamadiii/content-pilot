@@ -86,56 +86,6 @@ export const appSetting = pgTable('app_setting', {
 });
 
 // ---------------------------------------------------------------------------
-// Outbound webhooks: notify downstream apps when a job reaches a terminal state.
-// ---------------------------------------------------------------------------
-
-export const WEBHOOK_EVENT_VALUES = ['done', 'rejected', 'failed'] as const;
-export type WebhookEvent = (typeof WEBHOOK_EVENT_VALUES)[number];
-
-export const webhook = pgTable('webhook', {
-  id: serial('id').primaryKey(),
-  name: text('name').notNull(),
-  url: text('url').notNull(),
-  // Signing secret (whsec_…). Stored recoverably — unlike api_key.keyHash — because
-  // the worker must recompute the HMAC on every send.
-  secret: text('secret').notNull(),
-  // null = all repos; otherwise the GitHub repo id (matches job.repoId).
-  repoId: integer('repo_id'),
-  // JSON array of WebhookEvent this webhook fires on (like promptSent's JSON convention).
-  events: text('events').notNull(),
-  enabled: boolean('enabled').notNull().default(true),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-});
-
-export const webhookDelivery = pgTable(
-  'webhook_delivery',
-  {
-    id: serial('id').primaryKey(),
-    webhookId: integer('webhook_id').notNull(),
-    jobId: integer('job_id'),
-    repoId: integer('repo_id'),
-    // The job status that fired this delivery.
-    event: text('event').notNull(),
-    url: text('url').notNull(),
-    requestBody: text('request_body'),
-    responseStatus: integer('response_status'),
-    // Truncated response body for debugging.
-    responseBody: text('response_body'),
-    // Network/timeout error, when the request never got a response.
-    error: text('error'),
-    durationMs: integer('duration_ms'),
-    createdAt: timestamp('created_at').notNull().defaultNow(),
-  },
-  (table) => [
-    index('idx_webhook_delivery_webhook_created').on(
-      table.webhookId,
-      table.createdAt
-    ),
-  ]
-);
-
-// ---------------------------------------------------------------------------
 // Live-preview AI sessions: an ephemeral dev server + Claude chat per repo.
 // The preview supervisor (src/preview/) owns these rows end to end.
 // ---------------------------------------------------------------------------
@@ -215,6 +165,12 @@ export const previewSession = pgTable(
     // lastActivityAt) on the next user message. Guards the ~60s sweep against
     // re-emitting the warning every pass.
     idleWarnedAt: timestamp('idle_warned_at'),
+    // Set by the "discard" action; the supervisor resets preview/<id> back to
+    // production main, clears the AI context + transcript, then nulls this.
+    resetRequestedAt: timestamp('reset_requested_at'),
+    // Set by the "pause" action; the supervisor aborts the in-flight AI run,
+    // then nulls this.
+    cancelRequestedAt: timestamp('cancel_requested_at'),
     closedAt: timestamp('closed_at'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
@@ -274,6 +230,9 @@ export const PREVIEW_EVENT_TYPE_VALUES = [
   // Idle sweep warns the client the session will expire soon; payload carries
   // { expiresAt }. Emitted once per idle stretch (see previewSession.idleWarnedAt).
   'session-idle-warning',
+  // Discard: the preview branch was reset to production; context + transcript
+  // cleared. The client refetches the (now empty) transcript.
+  'reset',
 ] as const;
 export type PreviewEventType = (typeof PREVIEW_EVENT_TYPE_VALUES)[number];
 
@@ -293,71 +252,3 @@ export const previewEvent = pgTable(
   (table) => [index('idx_preview_event_session').on(table.sessionId, table.id)]
 );
 
-export const JOB_STATUS_VALUES = [
-  'queued',
-  'running',
-  'done',
-  'rejected',
-  'failed',
-  'canceled',
-] as const;
-export type JobStatus = (typeof JOB_STATUS_VALUES)[number];
-
-export const job = pgTable(
-  'job',
-  {
-    id: serial('id').primaryKey(),
-    repoId: integer('repo_id').notNull(),
-    // Denormalized so the worker never needs joins
-    owner: text('owner').notNull(),
-    repo: text('repo').notNull(),
-    branch: text('branch').notNull(),
-    prompt: text('prompt').notNull(),
-    // Opaque caller user id (e.g. the hub's better-auth user id) for per-client history
-    requesterId: text('requester_id'),
-    // Display label (name/email) shown in the dashboard
-    requestedBy: text('requested_by'),
-    // Element-picker context
-    fieldPath: text('field_path'),
-    pageUrl: text('page_url'),
-    elementSelector: text('element_selector'),
-    // cms-bridge source annotation: `<project>:<file>:<line>` from data-cms-src,
-    // and the element's current text, so the AI edits the exact source location.
-    sourceRef: text('source_ref'),
-    elementText: text('element_text'),
-    status: text('status').$type<JobStatus>().notNull().default('queued'),
-    // Admin-triggered rerun with guardrails off (dashboard "retry without
-    // limits" on a rejected job). Never settable through the public API.
-    unrestricted: boolean('unrestricted').notNull().default(false),
-    // Client-facing error / rejection reason
-    error: text('error'),
-    resultSummary: text('result_summary'),
-    commitSha: text('commit_sha'),
-    // Exact input sent to Claude (guardrail skill + assembled batch prompt) as a
-    // JSON array of { text, value? } segments, stored on the batch lead so the
-    // dashboard can render template vs backend-value with different opacity.
-    promptSent: text('prompt_sent'),
-    // Claude stdout/stderr, dashboard-only, truncated
-    logs: text('logs'),
-    // Jobs solved together in one Claude session share the lead job's id;
-    // usage/cost and full logs live on the lead job only.
-    batchId: integer('batch_id'),
-    // AI run info reported by the Claude CLI (stored on the batch lead)
-    model: text('model'),
-    inputTokens: integer('input_tokens'),
-    outputTokens: integer('output_tokens'),
-    costUsd: doublePrecision('cost_usd'),
-    startedAt: timestamp('started_at'),
-    finishedAt: timestamp('finished_at'),
-    createdAt: timestamp('created_at').notNull().defaultNow(),
-    updatedAt: timestamp('updated_at').notNull().defaultNow(),
-  },
-  (table) => [
-    index('idx_job_repo_id_created_at').on(table.repoId, table.createdAt),
-    index('idx_job_status').on(table.status),
-    index('idx_job_requester_id_created_at').on(
-      table.requesterId,
-      table.createdAt
-    ),
-  ]
-);

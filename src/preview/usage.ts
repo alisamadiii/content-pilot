@@ -1,4 +1,11 @@
-import type { ClaudeUsage } from '../worker/runner';
+// Per-run AI usage reported by a provider (Claude Agent SDK or the Gemini CLI):
+// model id, token counts, and dollar cost. Nulls mean "not reported".
+export type ClaudeUsage = {
+  model: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+};
 
 /**
  * Combines per-run AI usage across the initial run + repair runs. Tokens are

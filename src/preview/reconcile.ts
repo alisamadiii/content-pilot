@@ -7,12 +7,13 @@ import {
   type PreviewSessionStatus,
 } from '@/db/schema';
 import { previewConfig } from './config';
-import { pumpMessages } from './chat';
+import { cancelSession, pumpMessages, sessionBusy } from './chat';
 import { emitEvent } from './events';
 import {
   liveIds,
   liveSession,
   pauseSession,
+  resetSession,
   startSession,
   teardownSession,
 } from './sessions';
@@ -22,6 +23,9 @@ const LIVE: PreviewSessionStatus[] = [...PREVIEW_SESSION_LIVE_STATUSES];
 // Guards against double-starting a session while its pipeline (clone/install/
 // spawn) is still running and it isn't in the live map yet.
 const starting = new Set<string>();
+
+// Guards against re-running a discard/reset across ticks while it's in flight.
+const resetting = new Set<string>();
 
 const launch = (row: typeof previewSession.$inferSelect) => {
   if (starting.has(row.id) || liveSession(row.id)) return;
@@ -80,6 +84,33 @@ export const reconcileTick = async () => {
         id,
         row?.status === 'published' ? 'published' : 'closed'
       );
+    }
+  }
+
+  // Pause requests: abort the in-flight run. Clear the flag either way — a
+  // request with no active run (already finished) is a harmless no-op.
+  for (const row of rows) {
+    if (row.cancelRequestedAt) {
+      if (sessionBusy(row.id)) cancelSession(row.id);
+      await db
+        .update(previewSession)
+        .set({ cancelRequestedAt: null, updatedAt: new Date() })
+        .where(eq(previewSession.id, row.id));
+    }
+  }
+
+  // Discard requests: reset the preview branch to production, keep the session
+  // live. Deferred a tick if a message is mid-run — resetRequestedAt persists.
+  for (const row of rows) {
+    if (
+      row.resetRequestedAt &&
+      LIVE.includes(row.status) &&
+      liveSession(row.id) &&
+      !sessionBusy(row.id) &&
+      !resetting.has(row.id)
+    ) {
+      resetting.add(row.id);
+      void resetSession(row).finally(() => resetting.delete(row.id));
     }
   }
 
