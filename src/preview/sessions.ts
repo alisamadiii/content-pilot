@@ -172,11 +172,15 @@ const installDeps = async (dir: string) => {
   }
   const cold = !existsSync(join(dir, 'node_modules'));
   // Warm revive fast-path: deps unchanged since the last successful install →
-  // skip npm entirely. This is what makes paused→ready take seconds.
+  // skip npm entirely. This is what makes paused→ready take seconds. The marker
+  // carries an install-scheme tag so a change in HOW we install (e.g. adding
+  // devDependencies) invalidates clones installed the old way and forces one
+  // re-install.
   const hash = depsHash(dir);
-  if (!cold && hash) {
+  const marker = hash ? `${hash}:incdev` : null;
+  if (!cold && marker) {
     try {
-      if (readFileSync(join(dir, INSTALL_HASH_MARKER), 'utf8').trim() === hash) {
+      if (readFileSync(join(dir, INSTALL_HASH_MARKER), 'utf8').trim() === marker) {
         return;
       }
     } catch {
@@ -184,16 +188,26 @@ const installDeps = async (dir: string) => {
     }
   }
   const hasNpmLock = existsSync(join(dir, 'package-lock.json'));
+  // `--include=dev` is load-bearing: the container runs with NODE_ENV=production
+  // (for the Next app), which makes npm OMIT devDependencies by default. Astro
+  // integrations (@astrojs/sitemap, @astrojs/react, …) usually live in
+  // devDependencies, so without this the client's astro.config fails to import
+  // them and the dev server exits at config load.
   await run(
     'npm',
-    [cold && hasNpmLock ? 'ci' : 'install', '--no-audit', '--no-fund'],
+    [
+      cold && hasNpmLock ? 'ci' : 'install',
+      '--include=dev',
+      '--no-audit',
+      '--no-fund',
+    ],
     {
       cwd: dir,
       timeoutMs: previewConfig.installTimeoutMs,
     }
   );
-  if (hash) {
-    await writeFile(join(dir, INSTALL_HASH_MARKER), hash).catch(() => {});
+  if (marker) {
+    await writeFile(join(dir, INSTALL_HASH_MARKER), marker).catch(() => {});
   }
 };
 
@@ -308,6 +322,10 @@ const spawnDevServer = (dir: string, port: number, boot: BootPlan | null) => {
     cwd: dir,
     env: {
       ...process.env,
+      // The container sets NODE_ENV=production for the Next app; a dev server
+      // must run in development (astro/vite dev, HMR, and dev-only deps expect
+      // it). Also stops plugins from taking prod-only branches during preview.
+      NODE_ENV: 'development',
       // Belt and braces for Vite's host check; the proxy already rewrites
       // Host to localhost via changeOrigin.
       __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: allowedHostSuffix(),
@@ -362,15 +380,21 @@ const salientError = (tail: string): string => {
   const lines = tail
     .split('\n')
     .map((line) => line.trim())
-    .filter(Boolean);
-  const hit = lines.find(
-    (line) =>
-      !line.startsWith('at ') &&
-      /cannot find module|unable to load|is not exported|failed to (load|resolve)|cannot resolve|ENOENT|not found|SyntaxError|ReferenceError|TypeError|Error:/i.test(
-        line
-      )
-  );
-  return (hit ?? tail.slice(-300)).slice(0, 400);
+    .filter(Boolean)
+    .filter((line) => !line.startsWith('at ')); // drop stack frames
+  // Prefer the SPECIFIC cause over a generic wrapper ("Unable to load X" is
+  // followed by "Cannot find module Y" — the latter is what we want).
+  const causeRe =
+    /cannot find module|is not exported|cannot resolve|failed to (load|resolve)|ENOENT|SyntaxError|ReferenceError|TypeError|Error \[/i;
+  const wrapperRe = /unable to load|failed to load|could not (load|resolve)/i;
+  const cause = lines.find((line) => causeRe.test(line));
+  if (cause) return cause.slice(0, 400);
+  // Otherwise take the wrapper line PLUS the next meaningful line (often the cause).
+  const wi = lines.findIndex((line) => wrapperRe.test(line));
+  if (wi !== -1) {
+    return [lines[wi], lines[wi + 1]].filter(Boolean).join(' — ').slice(0, 400);
+  }
+  return tail.slice(-300).slice(0, 400);
 };
 
 // ---------------------------------------------------------------------------
