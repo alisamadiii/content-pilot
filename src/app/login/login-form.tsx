@@ -24,7 +24,7 @@ export const LoginForm = ({ isFirstRun }: { isFirstRun: boolean }) => {
       setError(result.error.message || 'Authentication failed');
       return;
     }
-    router.push('/jobs');
+    router.push('/sessions');
     router.refresh();
   };
 
