@@ -353,6 +353,26 @@ const waitForReady = async (port: number, child: ChildProcess) => {
   throw new Error('The preview server did not start in time.');
 };
 
+// The dev server prints the REAL cause (a module/import error, a missing dep)
+// BEFORE the stack trace, but the stack is what lands at the very end of the
+// output. Surface the first meaningful non-stack error line so the hub shows the
+// cause — not the misleading transport frame (e.g. Vite 8's "Cannot send
+// non-custom events" that masks a failed import). Falls back to the tail end.
+const salientError = (tail: string): string => {
+  const lines = tail
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const hit = lines.find(
+    (line) =>
+      !line.startsWith('at ') &&
+      /cannot find module|unable to load|is not exported|failed to (load|resolve)|cannot resolve|ENOENT|not found|SyntaxError|ReferenceError|TypeError|Error:/i.test(
+        line
+      )
+  );
+  return (hit ?? tail.slice(-300)).slice(0, 400);
+};
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
@@ -468,8 +488,8 @@ export const startSession = async (row: SessionRow) => {
     await setStatus(row.id, needsConfig ? 'needs_config' : 'failed', {
       error: needsConfig
         ? message.slice(0, 500)
-        : `The preview could not start: ${message.slice(0, 300)}${
-            tail ? ` — ${tail.slice(-300)}` : ''
+        : `The preview could not start: ${
+            tail ? salientError(tail) : message.slice(0, 300)
           }`,
     });
   }

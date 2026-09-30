@@ -9,7 +9,40 @@
  * node_modules (always present — it's an Astro dependency).
  */
 
-import { parse } from "@astrojs/compiler";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+// @astrojs/compiler is a dependency of the client's astro, but npm may nest it
+// under astro rather than hoist it to the clone's top-level node_modules — in
+// which case a bare `import "@astrojs/compiler"` from THIS copied file fails to
+// resolve (walks ai-analyzer/ -> clone/node_modules, not astro's nested tree).
+// That is exactly what breaks in the container. Resolve it the way astro itself
+// does (from astro's own location) and import the ESM entry by absolute path.
+// Lazy, so merely loading this module (e.g. during Vite config load) never needs
+// the compiler — only the actual .astro transform does.
+let parsePromise;
+function loadParse() {
+  if (!parsePromise) {
+    parsePromise = (async () => {
+      const cloneRequire = createRequire(join(process.cwd(), "package.json"));
+      let pkgJson;
+      try {
+        const astroRequire = createRequire(
+          cloneRequire.resolve("astro/package.json")
+        );
+        pkgJson = astroRequire.resolve("@astrojs/compiler/package.json");
+      } catch {
+        // Fall back to resolving from the clone root (hoisted layout).
+        pkgJson = cloneRequire.resolve("@astrojs/compiler/package.json");
+      }
+      const entry = join(dirname(pkgJson), "dist/node/index.js");
+      const mod = await import(pathToFileURL(entry).href);
+      return mod.parse ?? mod.default?.parse;
+    })();
+  }
+  return parsePromise;
+}
 
 export const SRC_ATTR = "data-cms-src";
 
@@ -106,6 +139,7 @@ function collectInserts(node, buf, project, srcPath, out) {
 
 /** Annotate one .astro source string. Returns new source, or null if nothing to do. */
 export async function annotateAstroSource(source, opts) {
+  const parse = await loadParse();
   const { ast } = await parse(source, { position: true });
   const buf = Buffer.from(source);
   const inserts = [];
