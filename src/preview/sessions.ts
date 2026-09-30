@@ -21,6 +21,7 @@ import {
 } from '../worker/git';
 import { injectAnalyzer } from './analyzer';
 import { previewConfig, previewUrlFor } from './config';
+import type { BootPlan } from './framework';
 import { emitEvent } from './events';
 import { registerRoute, unregisterRoute } from './proxy';
 
@@ -32,8 +33,8 @@ type LiveSession = {
   dir: string;
   /** Where the website's package.json lives — dir itself or a subproject. */
   appDir: string;
-  /** `--config` path (relative to appDir) for the injected analyzer, or null. */
-  configArg: string | null;
+  /** How to boot the tagged dev server (framework + config/launcher), or null. */
+  boot: BootPlan | null;
   port: number;
   child: ChildProcess;
   restarts: number;
@@ -217,29 +218,80 @@ const hasDevScript = (dir: string) => {
   }
 };
 
-const spawnDevServer = (
+// Per-framework dev-server command. Astro/Vite import a git-invisible wrapper
+// via `--config`; Next rides a programmatic server (no --config flag exists).
+// `--root .` (Astro) pins the project root to appDir so an alternate `--config`
+// in a subfolder doesn't make Astro treat that subfolder as the root.
+// `--ignore-lock` (Astro 7+, silently ignored by older versions) forces the dev
+// server to run in the foreground: Astro 7 detects agentic environments and
+// self-daemonizes — the spawned process exits 0 while a detached daemon serves,
+// which the crash handler reads as a crash loop and teardown can never kill.
+const devCommand = (
   dir: string,
   port: number,
-  configArg: string | null
-) => {
-  // `--root .` pins the project root to appDir so an alternate `--config` in a
-  // subfolder doesn't make Astro treat that subfolder as the root.
-  // `--ignore-lock` (Astro 7+, silently ignored by older versions) forces the
-  // dev server to run in the foreground: Astro 7 detects agentic environments
-  // and self-daemonizes — the spawned process exits 0 while a detached daemon
-  // serves, which the crash handler reads as a crash loop and the teardown can
-  // never kill. ignore-lock disables auto-backgrounding and lock-file checks.
-  const flags = [
-    ...(configArg ? ['--config', configArg, '--root', '.'] : []),
-    '--port',
-    String(port),
-    '--host',
-    '127.0.0.1',
-    '--ignore-lock',
-  ];
+  boot: BootPlan | null
+): { cmd: string; args: string[]; env: Record<string, string> } => {
+  const p = String(port);
+  const extraEnv: Record<string, string> = { ...(boot?.extraEnv ?? {}) };
+
+  if (boot?.framework === 'astro') {
+    const flags = [
+      '--config',
+      boot.configPath,
+      '--root',
+      '.',
+      '--port',
+      p,
+      '--host',
+      '127.0.0.1',
+      '--ignore-lock',
+    ];
+    const [cmd, args] = hasDevScript(dir)
+      ? ['npm', ['run', 'dev', '--', ...flags]]
+      : ['npx', ['astro', 'dev', ...flags]];
+    return { cmd, args: args as string[], env: extraEnv };
+  }
+
+  if (boot?.framework === 'vite') {
+    // Run Vite directly with our wrapper config. NOT `npm run dev --`: the
+    // client's dev script hardcodes its own --port, which would fight ours.
+    return {
+      cmd: 'npx',
+      args: [
+        'vite',
+        'dev',
+        '--config',
+        boot.configPath,
+        '--port',
+        p,
+        '--host',
+        '127.0.0.1',
+      ],
+      env: extraEnv,
+    };
+  }
+
+  if (boot?.framework === 'next') {
+    // Run `next dev` directly, not the client's script (which may add
+    // --turbopack and hardcode a port). Webpack is the default and required for
+    // our on-disk-config loader to run; turbopack would ignore it.
+    return {
+      cmd: 'npx',
+      args: ['next', 'dev', '--port', p, '--hostname', '127.0.0.1'],
+      env: extraEnv,
+    };
+  }
+
+  // Unrecognized framework — boot plainly with no tagging (legacy fallback).
+  const flags = ['--port', p, '--host', '127.0.0.1'];
   const [cmd, args] = hasDevScript(dir)
     ? ['npm', ['run', 'dev', '--', ...flags]]
     : ['npx', ['astro', 'dev', ...flags]];
+  return { cmd, args: args as string[], env: extraEnv };
+};
+
+const spawnDevServer = (dir: string, port: number, boot: BootPlan | null) => {
+  const { cmd, args, env: bootEnv } = devCommand(dir, port, boot);
   // Public scheme/port for the HMR websocket (read by the injected wrapper
   // config) — the browser must dial the proxy's public endpoint, never the
   // dev server's internal port.
@@ -252,7 +304,7 @@ const spawnDevServer = (
   } catch {
     // keep defaults
   }
-  return spawn(cmd, args as string[], {
+  return spawn(cmd, args, {
     cwd: dir,
     env: {
       ...process.env,
@@ -262,6 +314,7 @@ const spawnDevServer = (
       PREVIEW_PUBLIC_PROTOCOL: publicProtocol,
       PREVIEW_PUBLIC_PORT: publicPort,
       FORCE_COLOR: '0',
+      ...bootEnv,
     },
     detached: false,
   });
@@ -321,7 +374,7 @@ const attachCrashHandler = (session: LiveSession) => {
         session.child = spawnDevServer(
           session.appDir,
           session.port,
-          session.configArg
+          session.boot
         );
         session.lastSpawnAt = Date.now();
         attachCrashHandler(session);
@@ -360,21 +413,26 @@ export const startSession = async (row: SessionRow) => {
     // artifact, trip the forbidden-path floor, and revert Claude's real edit.
     await discardChanges(dir);
 
-    // Inject the preview-only AI analyzer (replaces cms-bridge for the session,
-    // stamps data-cms-src, powers click-to-point-the-AI). Git-invisible and
-    // never touches the real astro.config, so it can't leak into a publish.
-    const configArg = injectAnalyzer(dir, appDir);
-    if (configArg) log(`session ${row.id}: analyzer injected (${configArg})`);
+    // Inject the preview-only AI analyzer (stamps data-cms-src per framework,
+    // powers click-to-point-the-AI). Git-invisible and never modifies the real
+    // config, so it can't leak into a publish.
+    const boot = injectAnalyzer(dir, appDir);
+    if (boot)
+      log(
+        `session ${row.id}: analyzer injected (${boot.framework}${
+          'configPath' in boot ? `: ${boot.configPath}` : ''
+        })`
+      );
 
     const port = await allocatePort();
-    const child = spawnDevServer(appDir, port, configArg);
+    const child = spawnDevServer(appDir, port, boot);
     bootOutput = captureOutput(child);
     const session: LiveSession = {
       id: row.id,
       repoId: row.repoId,
       dir,
       appDir,
-      configArg,
+      boot,
       port,
       child,
       restarts: 0,

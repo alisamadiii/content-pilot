@@ -48,9 +48,22 @@
     }
   }
 
+  // Some Vite frameworks (TanStack Start) recompile route files from disk and
+  // strip our `data-cms-src`, but inject their OWN dev source attribute
+  // (`data-tsd-source="/path:line:col"`). Fall back to it and normalize to the
+  // same `path:line` shape the hub/prompt-context expects (no leading slash, no
+  // trailing column).
+  function normalizeTsd(value) {
+    var v = value.replace(/^\//, "");
+    var m = v.match(/^(.*?):(\d+)(?::\d+)?$/);
+    return m ? m[1] + ":" + m[2] : v;
+  }
+
   function sourceRefFor(el) {
     var srcEl = el.closest("[data-cms-src]");
-    return srcEl ? srcEl.getAttribute("data-cms-src") || "" : "";
+    if (srcEl) return srcEl.getAttribute("data-cms-src") || "";
+    var tsdEl = el.closest("[data-tsd-source]");
+    return tsdEl ? normalizeTsd(tsdEl.getAttribute("data-tsd-source") || "") : "";
   }
 
   function elementTextFor(el) {
@@ -205,7 +218,7 @@
   function editableFrom(node) {
     if (!(node instanceof Element)) return null;
     var el = node.closest(EDITABLE);
-    if (!el || !el.closest("[data-cms-src]")) return null;
+    if (!el || !el.closest("[data-cms-src],[data-tsd-source]")) return null;
     if (
       el.closest("#ai-analyzer-dot") ||
       el.closest("#ai-analyzer-hint") ||
