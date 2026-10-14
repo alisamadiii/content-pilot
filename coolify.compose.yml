@@ -1,6 +1,8 @@
 services:
   content-pilot:
-    image: ghcr.io/alisamadiii/content-pilot:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
       - SERVICE_FQDN_CONTENTPILOT_3010
       - DATABASE_URL=postgres://postgres:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/content_pilot
