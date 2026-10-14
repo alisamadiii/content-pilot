@@ -59,7 +59,11 @@ const main = async () => {
   // Mirrors chat.ts: a skill names its own files, so no page pin with it.
   const pinned = skillBlock
     ? ''
-    : await buildPinnedFile(context, dir, appDir, { message, routes: repo.routes });
+    : await buildPinnedFile(context, dir, appDir, {
+        message,
+        routes: repo.routes,
+        hasAttachments: Boolean(process.env.IMAGE),
+      });
   // IMAGE="<description>": simulate one uploaded image the way chat.ts +
   // attachments.ts would (server-chosen path, placeholder bytes, prompt block).
   let attachBlock = '';

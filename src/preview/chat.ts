@@ -32,6 +32,7 @@ import {
   buildSkillBlock,
   loadSkill,
   parseSkillInvocation,
+  scrubSkillJargon,
 } from './skills';
 import { addUsage, resolveMessageCost } from './usage';
 import {
@@ -304,31 +305,34 @@ const processMessage = async (row: MessageRow) => {
     // for Gemini the supervisor inlines the SKILL.md (see ./skills).
     let skillBlock = '';
     let request = row.content;
-    const invocation =
-      provider === 'gemini' ? parseSkillInvocation(row.content) : null;
-    if (invocation) {
+    // Parsed for both providers (the reply scrub keys on it); only Gemini
+    // gets the body inlined.
+    const invocation = parseSkillInvocation(row.content);
+    if (invocation && provider === 'gemini') {
       const skill = await loadSkill(session.dir, session.appDir, invocation.name);
       if (skill) {
         skillBlock = buildSkillBlock(skill, invocation.rest);
         request = invocation.rest || bareSkillRequest(skill.name);
       }
     }
+    const attachments = await loadMessageAttachments(row.id);
     // The hub-supplied page/element context steers the AI straight to the file
     // (fewer tool calls); the client only ever sees `content` in the transcript.
-    // Inline the clicked file, or else the page (named in the message or being
-    // viewed) plus its content components, so the AI skips the reads. A skill
-    // names its own files, so only a clicked element is pinned alongside it.
+    // Inline the clicked file, or else — for edit-like messages — the page
+    // (named in the message or being viewed) plus its content components, so
+    // the AI skips the reads. A skill names its own files, so only a clicked
+    // element is pinned alongside it.
     const pinnedFile =
       skillBlock && !parseSourceRef(row.context)
         ? ''
         : await buildPinnedFile(row.context, session.dir, session.appDir, {
             message: row.content,
             routes: repo.routes,
+            hasAttachments: attachments.length > 0,
           });
     // Images the owner attached: the server picks a destination, copies the
     // bytes into the clone now and tells the agent the URL; the agent only
     // adds the reference (see ./attachments).
-    const attachments = await loadMessageAttachments(row.id);
     const placed: Placed[] = attachments.length
       ? await planPlacements({
           dir: session.dir,
@@ -586,7 +590,7 @@ const processMessage = async (row: MessageRow) => {
     await finishMessage(
       row,
       { status: 'done', commitSha: sha, ...usage },
-      resultText || 'Done.',
+      scrubSkillJargon(resultText, invocation?.name ?? null) || 'Done.',
       costIsCumulative
     );
     log(

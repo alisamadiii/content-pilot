@@ -3,7 +3,29 @@ import { test } from 'node:test';
 import { mkdtemp, mkdir, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { buildSkillBlock, loadSkill, parseSkillInvocation } from './skills';
+import {
+  bareSkillRequest,
+  buildSkillBlock,
+  loadSkill,
+  parseSkillInvocation,
+  scrubSkillJargon,
+} from './skills';
+
+test('bareSkillRequest tells the model to ask before touching files', () => {
+  assert.match(bareSkillRequest('add-page'), /Do not read or change any file yet/);
+});
+
+test('scrubSkillJargon strips the skill token, "using the … skill" and backticks', () => {
+  assert.equal(
+    scrubSkillJargon(
+      "I can help you build the new page (`/bathroom-remodeling`) using the `/add-page` skill. Shall we create it now?",
+      'add-page'
+    ),
+    'I can help you build the new page (/bathroom-remodeling). Shall we create it now?'
+  );
+  assert.equal(scrubSkillJargon('Done with /manage-faqs .', 'manage-faqs'), 'Done.');
+  assert.equal(scrubSkillJargon('I updated `site.ts` for you!', null), 'I updated site.ts for you!');
+});
 
 test('parseSkillInvocation reads /name and the rest of the message', () => {
   assert.deepEqual(parseSkillInvocation('/add-page Careers page'), {
@@ -64,6 +86,7 @@ test('buildSkillBlock wraps the body with the invocation and precedence note', (
   assert.match(block, /override the general editing limits/);
   assert.match(block, /relative to the skill's own folder \(`\.gemini\/skills\/add-page\/`\)/);
   assert.match(block, /--- skill: add-page ---\nDo X\.\n--- end of skill ---/);
-  assert.match(block, /never mention "the site owner", "invoked", "skill"/);
+  assert.match(block, /friendly website editor talking to the person who runs this site/);
+  assert.match(block, /Never say "the site owner", "invoked", "skill"/);
   assert.doesNotMatch(buildSkillBlock({ ...skill, name: 'x' }, ''), /with:/);
 });

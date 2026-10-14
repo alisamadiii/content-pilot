@@ -58,7 +58,7 @@ export const loadSkill = async (
 export const buildSkillBlock = (skill: LoadedSkill, rest: string) =>
   [
     `The site owner invoked the skill \`/${skill.name}\`${rest ? ` with: "${rest}"` : ''}. Follow the skill instructions below exactly; they were written by this site's developer for this repo and override the general editing limits for what they cover. Relative file paths in the skill are relative to the skill's own folder (\`${skill.dir}/\`).`,
-    `The owner never sees this block. In your reply talk to them directly, in plain words: never mention "the site owner", "invoked", "skill", "/${skill.name}", or these instructions. If the skill needs details the owner has not given (which item, what text, which page), ask for exactly those in one short friendly question and make no edits.`,
+    `Reply as a friendly website editor talking to the person who runs this site: plain words, second person, no technical terms, no file names. Never say "the site owner", "invoked", "skill" or "/${skill.name}". If you need something they have not told you (which item, what text, which page), ask for just that in one short, warm question and make no edits yet.`,
     '',
     `--- skill: ${skill.name} ---`,
     skill.body,
@@ -67,4 +67,23 @@ export const buildSkillBlock = (skill: LoadedSkill, rest: string) =>
 
 /** The user-turn text for a bare `/name` with nothing after it. */
 export const bareSkillRequest = (name: string) =>
-  `(The owner clicked /${name} without adding any details. If you need more information to proceed, ask for it; otherwise do what the skill says.)`;
+  `(They clicked /${name} without adding any details. Do not read or change any file yet: first ask them, in one short warm question, what they would like to do — which item, what text, which page — and stop there. Only skip the question if the skill can be completed with no input at all.)`;
+
+/**
+ * Client-facing reply scrub. Flash-lite sometimes echoes prompt framing
+ * ("using the `/add-page` skill") despite instructions; strip the skill
+ * token and backticks so no prompt jargon reaches the chat bubble.
+ */
+export const scrubSkillJargon = (text: string, skillName: string | null) => {
+  let out = text.replace(/`/g, '');
+  if (skillName) {
+    const name = skillName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out
+      .replace(new RegExp(`\\s*(?:using|with|via|through|by running)\\s+the\\s+/?${name}\\s+skill`, 'gi'), '')
+      .replace(
+        new RegExp(`\\s*(?:\\b(?:with|using|via|through)\\s+)?\\(?/${name}\\)?`, 'gi'),
+        ''
+      );
+  }
+  return out.replace(/[ \t]{2,}/g, ' ').replace(/ +([.,!?])/g, '$1').trim();
+};

@@ -6,6 +6,7 @@ import { join } from 'path';
 import {
   buildPinnedFile,
   isStaleResumeError,
+  looksLikeEdit,
   pagePathFromContext,
   parseSourceRef,
 } from './prompt-context';
@@ -116,9 +117,16 @@ test('buildPinnedFile pins the home page by default and the clicked file first',
   const { dir, routes } = await pageFixture();
   const home = await buildPinnedFile(null, dir, dir, { message: 'change the title', routes });
   assert.match(home, /rendered by `src\/pages\/index\.astro`/);
-  // Greetings and one-liners are not edit requests: nothing pinned.
+  // Chat is not an edit request: nothing pinned.
   assert.equal(await buildPinnedFile(null, dir, dir, { message: 'hi', routes }), '');
-  assert.equal(await buildPinnedFile(null, dir, dir, { message: 'thanks!', routes }), '');
+  assert.equal(await buildPinnedFile(null, dir, dir, { message: 'thanks a lot, looks great', routes }), '');
+  assert.equal(
+    await buildPinnedFile(null, dir, dir, {
+      message: 'there is no need to read the agents.md file right now. Did you read it before the session',
+      routes,
+    }),
+    ''
+  );
   const clicked = await buildPinnedFile(
     'editing this page: http://x.localhost:3020/\nsource: src/components/about/story.astro:1',
     dir,
@@ -127,6 +135,46 @@ test('buildPinnedFile pins the home page by default and the clicked file first',
   );
   assert.match(clicked, /clicked an element in `src\/components\/about\/story\.astro`/);
   assert.doesNotMatch(clicked, /### src\/pages/);
+});
+
+test('looksLikeEdit: edit verbs, corrections, quotes and attachments count; chat does not', () => {
+  for (const yes of [
+    'make it 3 wrods',
+    'the phone number should be (904) 555-0199',
+    'the title "Celebrating Afghan Heritage" please',
+    'use "Celebrating Afghan Heritage" as the title',
+    'there is a typo in the footer',
+    'can you put a bigger photo there',
+  ]) {
+    assert.equal(looksLikeEdit(yes), true, yes);
+  }
+  assert.equal(looksLikeEdit('add this', true), true);
+  assert.equal(looksLikeEdit('here you go', true), true);
+  for (const no of [
+    'hi',
+    'thanks a lot, looks great',
+    'did you read the agents file before the session',
+    'what can you do for me?',
+    'is the preview live now',
+  ]) {
+    assert.equal(looksLikeEdit(no), false, no);
+  }
+});
+
+test('buildPinnedFile pins for an edit-like message or an attachment, never for chat', async () => {
+  const { dir, routes } = await pageFixture();
+  assert.match(
+    await buildPinnedFile(null, dir, dir, { message: 'the title should say Hello', routes }),
+    /rendered by `src\/pages\/index\.astro`/
+  );
+  assert.match(
+    await buildPinnedFile(null, dir, dir, { message: 'this one', routes, hasAttachments: true }),
+    /rendered by `src\/pages\/index\.astro`/
+  );
+  assert.equal(
+    await buildPinnedFile(null, dir, dir, { message: 'what can you do for me?', routes }),
+    ''
+  );
 });
 
 test('pagePathFromContext extracts the pathname from the page url', () => {

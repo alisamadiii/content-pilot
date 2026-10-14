@@ -45,6 +45,27 @@ export const pagePathFromContext = (context: string | null): string => {
 
 export const MAX_PINNED_FILE_BYTES = 40_000;
 
+// Cheap edit-intent check (no AI call). Pinning a page bundle costs ~10k
+// tokens, right for an edit and waste for chat ("did you read it?"). A miss
+// is soft: the page map is in the system prompt, so the model reads the file
+// itself at the cost of one extra turn. Keep the net wide.
+const EDIT_WORDS = [
+  'change', 'add', 'remove', 'delete', 'update', 'make', 'put', 'replace',
+  'set', 'edit', 'fix', 'swap', 'rename', 'move', 'insert', 'upload',
+  'shorten', 'lengthen', 'rewrite', 'write', 'show', 'hide', 'switch',
+  'translate', 'bold', 'link', 'bigger', 'smaller', 'larger', 'increase',
+  'reduce', 'new', 'use',
+  // corrections
+  'typo', 'wrong', 'should', 'instead', 'missing', 'outdated', 'broken',
+  'incorrect',
+];
+const EDIT_WORD_RE = new RegExp(`\\b(${EDIT_WORDS.join('|')})\\b`, 'i');
+const QUOTED_RE = /["“”'‘’][^"“”'‘’]{2,}["“”'‘’]/;
+
+/** True when the message reads like a request to change something. */
+export const looksLikeEdit = (message: string, hasAttachments = false) =>
+  hasAttachments || EDIT_WORD_RE.test(message) || QUOTED_RE.test(message);
+
 const fence = (path: string, content: string) =>
   `### ${path}\n\`\`\`\n${content}\n\`\`\``;
 
@@ -67,7 +88,11 @@ export const buildPinnedFile = async (
   context: string | null,
   dir: string,
   appDir: string,
-  options: { message?: string; routes?: Map<string, string> } = {}
+  options: {
+    message?: string;
+    routes?: Map<string, string>;
+    hasAttachments?: boolean;
+  } = {}
 ): Promise<string> => {
   const ref = parseSourceRef(context);
   if (ref) {
@@ -97,9 +122,9 @@ export const buildPinnedFile = async (
   const message = options.message ?? '';
   const current = pagePathFromContext(context);
   const mentioned = routeMentionedIn(message, routes, current);
-  // "hi" / "thanks" are not edit requests: don't spend ~4k tokens pinning the
-  // page for them. Anything that names a page or has a few words gets pinned.
-  if (!mentioned && message.trim().split(/\s+/).length < 3) return '';
+  // Chat ("hi", "did you read it?") gets no pin; naming a page or sounding
+  // like an edit does.
+  if (!mentioned && !looksLikeEdit(message, options.hasAttachments)) return '';
   const route = mentioned ?? current;
   const pageFile = resolvePageFile(routes, route);
   if (!pageFile) return '';

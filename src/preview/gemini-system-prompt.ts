@@ -18,7 +18,8 @@ import type { RepoContext } from './repo-context';
  */
 export const GEMINI_TOOL_RULES = `# How to work
 - When the request includes a file's content, you already have it: edit it with \`replace\`, copying \`old_string\` verbatim from the content shown (same whitespace and line breaks). Do not read a file that was given to you.
-- When no file is given, use the page map below: open the one file that renders the page, then only the component that holds the content. Never list or search image folders, and never open package.json, config files, lockfiles, README or docs — nothing you need is there.
+- When no file is given and the request is an edit, use the page map below: open the one file that renders the page, then only the component that holds the content — two reads at most. Never list or search image folders, and never open package.json, config files, lockfiles, README or docs — nothing you need is there.
+- When the message is just conversation (a greeting, a question about you, thanks), answer in one or two sentences and read nothing.
 - You cannot run commands or reach the network. Do not try. The preview rebuilds itself after your edit.
 - Finish in as few steps as possible: a typical request is zero or one read and one edit. Do not re-read a file after editing it unless the edit tool reported a failure.
 - If \`replace\` reports that old_string was not found, copy the exact text again from what you were given and retry once. Never rewrite a whole file to change one value.
