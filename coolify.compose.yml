@@ -7,7 +7,10 @@ services:
       - SERVICE_FQDN_CONTENTPILOT_3010
       - DATABASE_URL=postgres://postgres:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/content_pilot
       - BETTER_AUTH_SECRET=${SERVICE_BASE64_64_AUTHSECRET}
-      - BETTER_AUTH_URL=${SERVICE_FQDN_CONTENTPILOT_3010}
+      # Hardcoded: Coolify's SERVICE_FQDN_* magic var does not interpolate here
+      # (service name has a dash → slug mismatch), leaving better-auth with an
+      # unresolved origin. The bare SERVICE_FQDN line above still drives routing.
+      - BETTER_AUTH_URL=https://pilot.alisamadii.com
       - GITHUB_PAT=${GITHUB_PAT}
       - WORKSPACE_DIR=/data/workspace
       - POLL_INTERVAL_MS=300000
