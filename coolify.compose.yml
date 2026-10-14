@@ -21,15 +21,32 @@ services:
     volumes:
       - cp-workspace:/data/workspace
       - cp-claude:/home/nextjs/.claude
-    # Wildcard preview router: *.alisamadii.dev -> the in-container proxy on 3020
-    # (src/preview/proxy.ts). Coolify's Domains field / SERVICE_FQDN magic vars
-    # reject wildcards, so this is wired as raw Traefik labels. TLS is terminated
-    # at Cloudflare (orange cloud), so the http router covers Flexible mode and
-    # the https router (Traefik default cert) covers Full mode. Traefik v3.6
-    # HostRegexp uses Go-regexp syntax. The .com admin domain is routed by
-    # Coolify's own generated labels and is unaffected.
+    # This service runs TWO listeners: the Next admin app on :3010 and the
+    # preview reverse-proxy on :3020 (src/preview/proxy.ts). Coolify's generated
+    # router for pilot.alisamadii.com has no explicit service/port — it relies on
+    # Traefik auto-detecting the container's single port. Defining ANY explicit
+    # Traefik service below makes that detected port the container default, which
+    # would silently bind the admin domain to the wrong listener. So we define
+    # BOTH routers explicitly here:
+    #  - pilot.alisamadii.com      -> cp-web (:3010), LE cert, high priority so it
+    #    wins over Coolify's now-ambiguous auto-router.
+    #  - *.alisamadii.dev (wildcard) -> cp-preview (:3020). Coolify's Domains field
+    #    and SERVICE_FQDN magic vars reject wildcards, so it's raw Traefik labels.
+    #    TLS terminates at Cloudflare; http covers Flexible, https covers Full.
+    # Traefik v3.6 HostRegexp uses Go-regexp syntax.
     labels:
       - traefik.enable=true
+      - 'traefik.http.routers.cp-web-http.rule=Host(`pilot.alisamadii.com`)'
+      - traefik.http.routers.cp-web-http.entryPoints=http
+      - traefik.http.routers.cp-web-http.middlewares=redirect-to-https
+      - traefik.http.routers.cp-web-http.priority=1000
+      - 'traefik.http.routers.cp-web-https.rule=Host(`pilot.alisamadii.com`)'
+      - traefik.http.routers.cp-web-https.entryPoints=https
+      - traefik.http.routers.cp-web-https.tls=true
+      - traefik.http.routers.cp-web-https.tls.certresolver=letsencrypt
+      - traefik.http.routers.cp-web-https.service=cp-web
+      - traefik.http.routers.cp-web-https.priority=1000
+      - traefik.http.services.cp-web.loadbalancer.server.port=3010
       - 'traefik.http.routers.cp-preview-http.rule=HostRegexp(`^[a-z0-9-]+\.alisamadii\.dev$`)'
       - traefik.http.routers.cp-preview-http.entryPoints=http
       - traefik.http.routers.cp-preview-http.service=cp-preview
