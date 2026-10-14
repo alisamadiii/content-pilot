@@ -27,7 +27,12 @@ import { buildRepoContext } from './repo-context';
 import { runSessionClaude } from './run-session-claude';
 import { runSessionGemini } from './run-session-gemini';
 import { liveSession } from './sessions';
-import { buildSkillBlock, loadSkill, parseSkillInvocation } from './skills';
+import {
+  bareSkillRequest,
+  buildSkillBlock,
+  loadSkill,
+  parseSkillInvocation,
+} from './skills';
 import { addUsage, resolveMessageCost } from './usage';
 import {
   buildPinnedFile,
@@ -305,7 +310,7 @@ const processMessage = async (row: MessageRow) => {
       const skill = await loadSkill(session.dir, session.appDir, invocation.name);
       if (skill) {
         skillBlock = buildSkillBlock(skill, invocation.rest);
-        request = invocation.rest || `Run the /${skill.name} skill.`;
+        request = invocation.rest || bareSkillRequest(skill.name);
       }
     }
     // The hub-supplied page/element context steers the AI straight to the file

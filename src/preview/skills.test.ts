@@ -64,5 +64,6 @@ test('buildSkillBlock wraps the body with the invocation and precedence note', (
   assert.match(block, /override the general editing limits/);
   assert.match(block, /relative to the skill's own folder \(`\.gemini\/skills\/add-page\/`\)/);
   assert.match(block, /--- skill: add-page ---\nDo X\.\n--- end of skill ---/);
+  assert.match(block, /never mention "the site owner", "invoked", "skill"/);
   assert.doesNotMatch(buildSkillBlock({ ...skill, name: 'x' }, ''), /with:/);
 });

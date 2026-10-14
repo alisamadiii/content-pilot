@@ -22,7 +22,12 @@ import {
   GEMINI_POLICY_PATH,
   writeGeminiRuntime,
 } from '../src/preview/gemini-setup';
-import { buildSkillBlock, loadSkill, parseSkillInvocation } from '../src/preview/skills';
+import {
+  bareSkillRequest,
+  buildSkillBlock,
+  loadSkill,
+  parseSkillInvocation,
+} from '../src/preview/skills';
 import { chooseImageDir, listImageDirHints, publicRelFor, slugify } from '../src/preview/image-dirs';
 import { mkdir, writeFile } from 'fs/promises';
 
@@ -48,7 +53,7 @@ const main = async () => {
     const skill = await loadSkill(dir, appDir, invocation.name);
     if (skill) {
       skillBlock = buildSkillBlock(skill, invocation.rest);
-      request = invocation.rest || `Run the /${skill.name} skill.`;
+      request = invocation.rest || bareSkillRequest(skill.name);
     }
   }
   // Mirrors chat.ts: a skill names its own files, so no page pin with it.

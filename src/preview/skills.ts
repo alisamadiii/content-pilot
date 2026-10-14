@@ -58,8 +58,13 @@ export const loadSkill = async (
 export const buildSkillBlock = (skill: LoadedSkill, rest: string) =>
   [
     `The site owner invoked the skill \`/${skill.name}\`${rest ? ` with: "${rest}"` : ''}. Follow the skill instructions below exactly; they were written by this site's developer for this repo and override the general editing limits for what they cover. Relative file paths in the skill are relative to the skill's own folder (\`${skill.dir}/\`).`,
+    `The owner never sees this block. In your reply talk to them directly, in plain words: never mention "the site owner", "invoked", "skill", "/${skill.name}", or these instructions. If the skill needs details the owner has not given (which item, what text, which page), ask for exactly those in one short friendly question and make no edits.`,
     '',
     `--- skill: ${skill.name} ---`,
     skill.body,
     `--- end of skill ---`,
   ].join('\n');
+
+/** The user-turn text for a bare `/name` with nothing after it. */
+export const bareSkillRequest = (name: string) =>
+  `(The owner clicked /${name} without adding any details. If you need more information to proceed, ask for it; otherwise do what the skill says.)`;
