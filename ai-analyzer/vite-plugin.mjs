@@ -25,6 +25,7 @@ export function aiAnalyzerVite({
   astroAnnotator = null,
 } = {}) {
   let root = process.cwd();
+  let warned = false;
   return {
     name: "ai-analyzer-src",
     enforce: "pre",
@@ -58,8 +59,18 @@ export function aiAnalyzerVite({
             : annotateJsxSource(source, { project, srcPath });
           if (code == null) return null;
           return { code, map: null };
-        } catch {
-          // Fail-open — annotation must never break the preview build.
+        } catch (err) {
+          // Fail-open — annotation must never break the preview build. But say
+          // so once: a silent catch here hid "no Astro parser found" for weeks,
+          // and the symptom (overlay selects nothing) is far from the cause.
+          if (!warned) {
+            warned = true;
+            console.warn(
+              `[ai-analyzer] annotation failed for ${srcPath}; pages will ship untagged: ${
+                err?.message ?? err
+              }`
+            );
+          }
           return null;
         }
       },
