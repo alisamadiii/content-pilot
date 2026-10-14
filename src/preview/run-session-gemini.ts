@@ -1,10 +1,14 @@
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
-import { SESSION_PROMPT } from '../worker/guardrails';
 import type { ClaudeUsage } from './usage';
 import type { SessionClaudeRun } from './run-session-claude';
 import { previewConfig } from './config';
-import { GEMINI_POLICY_PATH } from './gemini-setup';
+import { GEMINI_HOME, GEMINI_POLICY_PATH } from './gemini-setup';
+
+/** Gemini CLI exit code when `model.maxSessionTurns` is hit. */
+const EXIT_TURN_LIMIT = 53;
+export const TURN_LIMIT_MESSAGE =
+  'The edit needed too many steps and was stopped before finishing.';
 
 /**
  * One chat message = one headless Gemini CLI run in the session's working tree.
@@ -232,6 +236,12 @@ export const runSessionGemini = async (params: {
   onEvent: (event: unknown) => void;
   /** External abort (user "pause"); kills the child without the timeout label. */
   signal?: AbortSignal;
+  /**
+   * Our replacement for the CLI's built-in system prompt (GEMINI_SYSTEM_MD),
+   * written per message by gemini-system-prompt.ts. Required for Gemini runs;
+   * the Claude runner ignores it.
+   */
+  systemPromptPath?: string;
 }): Promise<SessionClaudeRun> => {
   let resultText = '';
   let streamedText = '';
@@ -271,6 +281,13 @@ export const runSessionGemini = async (params: {
       ...process.env,
       // Skip the interactive folder-trust gate in headless/CI.
       GEMINI_CLI_TRUST_WORKSPACE: 'true',
+      // Isolated config home (settings.json + policy), see gemini-setup.ts.
+      GEMINI_CLI_HOME: GEMINI_HOME,
+      // Our compact editor prompt replaces the CLI's built-in coding-agent
+      // prompt (~8k tokens per request otherwise).
+      ...(params.systemPromptPath
+        ? { GEMINI_SYSTEM_MD: params.systemPromptPath }
+        : {}),
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -293,15 +310,10 @@ export const runSessionGemini = async (params: {
     else params.signal.addEventListener('abort', onAbort);
   }
 
-  // Gemini's system prompt can't be appended (only fully replaced via
-  // GEMINI_SYSTEM_MD, which would drop the CLI's own coding instructions), so
-  // the guardrails ride at the top of the prompt — like the Claude preset
-  // append. Sent every run (cheap on Flash); resume keeps conversational
-  // context but not a sticky system message.
-  const fullPrompt = `${SESSION_PROMPT}\n\n---\n\n${params.prompt}`;
-  // The prompt (with guardrails + any recap) goes in via stdin — avoids argv
-  // length limits.
-  child.stdin.write(fullPrompt);
+  // The editing rules live in the system prompt file (GEMINI_SYSTEM_MD), so
+  // the user prompt is just context + recap + request. Goes in via stdin —
+  // avoids argv length limits.
+  child.stdin.write(params.prompt);
   child.stdin.end();
 
   const handleEvent = (evt: Record<string, unknown>) => {
@@ -384,6 +396,10 @@ export const runSessionGemini = async (params: {
   clearTimeout(timer);
 
   if (!resultText) resultText = streamedText;
+  if (exitCode === EXIT_TURN_LIMIT && !timedOut) {
+    failed = true;
+    stderr = TURN_LIMIT_MESSAGE;
+  }
   const clean = gotResult && !failed && !timedOut && exitCode === 0;
 
   return {

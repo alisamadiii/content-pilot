@@ -13,7 +13,8 @@ RUN pnpm build
 
 FROM base AS runtime
 WORKDIR /app
-RUN apk add --no-cache git bash
+# ripgrep: Gemini CLI's grep_search falls back to a slower JS grep without it.
+RUN apk add --no-cache git bash ripgrep
 RUN npm install -g @anthropic-ai/claude-code @google/gemini-cli
 
 RUN addgroup -g 1001 nodejs && adduser -u 1001 -G nodejs -s /bin/sh -D nextjs

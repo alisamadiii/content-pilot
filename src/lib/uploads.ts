@@ -55,8 +55,7 @@ export const removeSessionUploads = async (sessionId: string) => {
   await rm(sessionUploadsDir(sessionId), { recursive: true, force: true });
 };
 
-// Lowercase alphanumeric, same alphabet as session ids: safe as a file stem
-// and unambiguous when the agent copies it into placements.json.
+// Lowercase alphanumeric, same alphabet as session ids: safe as a file stem.
 export const newAttachmentId = () => {
   const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
   const bytes = randomBytes(10);

@@ -62,10 +62,71 @@ test('buildPinnedFile returns empty when the file is missing or oversized', asyn
   assert.equal(await buildPinnedFile('source: src/big.astro:1', dir, dir), '');
 });
 
-test('buildPinnedFile returns empty when there is no element ref', async () => {
+test('buildPinnedFile returns empty when there is no element ref and no routes', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cp-pin-'));
   assert.equal(await buildPinnedFile('just a page edit', dir, dir), '');
   assert.equal(await buildPinnedFile(null, dir, dir), '');
+});
+
+const pageFixture = async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cp-pin-'));
+  await mkdir(join(dir, 'src/pages'), { recursive: true });
+  await mkdir(join(dir, 'src/components/about'), { recursive: true });
+  await writeFile(join(dir, 'src/pages/index.astro'), '<h1>Home</h1>');
+  await writeFile(
+    join(dir, 'src/pages/about.astro'),
+    '---\nimport Story from "@/components/about/story.astro";\n---\n<Story />'
+  );
+  await writeFile(join(dir, 'src/components/about/story.astro'), '<p>The person behind</p>');
+  const routes = new Map([
+    ['/', 'src/pages/index.astro'],
+    ['/about', 'src/pages/about.astro'],
+  ]);
+  return { dir, routes };
+};
+
+test('buildPinnedFile pins the viewed page and its components when nothing was clicked', async () => {
+  const { dir, routes } = await pageFixture();
+  const block = await buildPinnedFile(
+    'The client is editing this page: http://x.localhost:3020/about',
+    dir,
+    dir,
+    { message: 'change the intro', routes }
+  );
+  assert.match(block, /The client is viewing the page `\/about`, rendered by `src\/pages\/about\.astro`/);
+  assert.match(block, /### src\/pages\/about\.astro/);
+  assert.match(block, /### src\/components\/about\/story\.astro/);
+  assert.match(block, /The person behind/);
+  assert.match(block, /Do not read them again/);
+});
+
+test('buildPinnedFile prefers a page named in the message over the viewed one', async () => {
+  const { dir, routes } = await pageFixture();
+  const block = await buildPinnedFile(
+    'The client is editing this page: http://x.localhost:3020/',
+    dir,
+    dir,
+    { message: 'add this image to the about page', routes }
+  );
+  assert.match(block, /The request is about the page `\/about`/);
+  assert.doesNotMatch(block, /<h1>Home<\/h1>/);
+});
+
+test('buildPinnedFile pins the home page by default and the clicked file first', async () => {
+  const { dir, routes } = await pageFixture();
+  const home = await buildPinnedFile(null, dir, dir, { message: 'change the title', routes });
+  assert.match(home, /rendered by `src\/pages\/index\.astro`/);
+  // Greetings and one-liners are not edit requests: nothing pinned.
+  assert.equal(await buildPinnedFile(null, dir, dir, { message: 'hi', routes }), '');
+  assert.equal(await buildPinnedFile(null, dir, dir, { message: 'thanks!', routes }), '');
+  const clicked = await buildPinnedFile(
+    'editing this page: http://x.localhost:3020/\nsource: src/components/about/story.astro:1',
+    dir,
+    dir,
+    { message: 'about page', routes }
+  );
+  assert.match(clicked, /clicked an element in `src\/components\/about\/story\.astro`/);
+  assert.doesNotMatch(clicked, /### src\/pages/);
 });
 
 test('pagePathFromContext extracts the pathname from the page url', () => {

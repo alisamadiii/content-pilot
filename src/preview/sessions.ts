@@ -15,7 +15,7 @@ import {
 } from '@/db/schema';
 import { getAppDir } from '@/lib/settings';
 import { removeSessionUploads } from '@/lib/uploads';
-import { PLACEMENTS_DIR } from './attachments';
+import { removeGeminiSystemPrompt } from './gemini-system-prompt';
 import {
   discardChanges,
   resetBranchToDefault,
@@ -459,10 +459,6 @@ export const startSession = async (row: SessionRow) => {
     // edit — otherwise every message's changed-files check would see the
     // artifact, trip the forbidden-path floor, and revert Claude's real edit.
     await discardChanges(dir);
-    // A run killed mid-flight can leave the agent's placements manifest
-    // behind (git-excluded, so clean -fd keeps it). Never let a stale one
-    // steer the next message.
-    await rm(join(dir, PLACEMENTS_DIR), { recursive: true, force: true });
 
     // Inject the preview-only AI analyzer (stamps data-cms-src per framework,
     // powers click-to-point-the-AI). Git-invisible and never modifies the real
@@ -612,5 +608,6 @@ export const teardownSession = async (
   // Uploaded images only matter while the chat lives.
   await db.delete(previewAttachment).where(eq(previewAttachment.sessionId, id));
   await removeSessionUploads(id);
+  await removeGeminiSystemPrompt(id);
   log(`session ${id}: torn down (${status})`);
 };

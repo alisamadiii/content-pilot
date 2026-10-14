@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
-import { readFile, rm } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { db } from '@/db';
 import { previewMessage, previewSession } from '@/db/schema';
@@ -9,31 +9,44 @@ import {
   changedFiles,
   commitAndPush,
   discardChanges,
-  ensureGitExclude,
   sanitize,
 } from '../worker/git';
 import {
-  applyPlacements,
   buildAttachmentsBlock,
-  listImageDirHints,
   loadMessageAttachments,
-  PLACEMENTS_DIR,
-  PLACEMENTS_FILE,
-  publicRelFor,
+  planPlacements,
+  verifyPlacements,
+  type Placed,
 } from './attachments';
 import type { ClaudeUsage } from './usage';
 import { previewConfig } from './config';
 import { emitEvent, emitEvents } from './events';
+import { writeGeminiSystemPrompt } from './gemini-system-prompt';
 import { RECAP_MAX_MESSAGES, renderRecap, sanitizeForClient } from './recap';
+import { buildRepoContext } from './repo-context';
 import { runSessionClaude } from './run-session-claude';
 import { runSessionGemini } from './run-session-gemini';
 import { liveSession } from './sessions';
+import { buildSkillBlock, loadSkill, parseSkillInvocation } from './skills';
 import { addUsage, resolveMessageCost } from './usage';
 import {
   buildPinnedFile,
   isStaleResumeError,
   pagePathFromContext,
+  parseSourceRef,
 } from './prompt-context';
+
+/** Tool calls in a forwarded agent event (both providers use the hub shape). */
+const countToolUses = (event: unknown): number => {
+  const message = (event as { type?: string; message?: { content?: unknown } })
+    ?.message;
+  if ((event as { type?: string })?.type !== 'assistant') return 0;
+  const content = message?.content;
+  if (!Array.isArray(content)) return 0;
+  return content.filter(
+    (block) => (block as { type?: string })?.type === 'tool_use'
+  ).length;
+};
 
 type MessageRow = typeof previewMessage.$inferSelect;
 
@@ -256,6 +269,11 @@ const processMessage = async (row: MessageRow) => {
   // 120ms keeps streamed text feeling smooth/fast (v0-like) without a flush
   // per token.
   let pending: unknown[] = [];
+  let toolCalls = 0;
+  const onEvent = (event: unknown) => {
+    toolCalls += countToolUses(event);
+    pending.push(event);
+  };
   const flush = async () => {
     const batch = pending;
     pending = [];
@@ -269,34 +287,56 @@ const processMessage = async (row: MessageRow) => {
   }, 120);
 
   try {
+    // Repo facts (page → file map, CMS files, image folders) from a cheap fs
+    // scan: they feed the Gemini system prompt and pin-by-page below. Rebuilt
+    // per message so files added by earlier edits show up.
+    const repo = await buildRepoContext(session.dir, session.appDir);
+    const systemPromptPath =
+      provider === 'gemini'
+        ? await writeGeminiSystemPrompt(row.sessionId, repo)
+        : undefined;
+    // "/skill-name …" messages: Claude's harness expands repo skills itself;
+    // for Gemini the supervisor inlines the SKILL.md (see ./skills).
+    let skillBlock = '';
+    let request = row.content;
+    const invocation =
+      provider === 'gemini' ? parseSkillInvocation(row.content) : null;
+    if (invocation) {
+      const skill = await loadSkill(session.dir, session.appDir, invocation.name);
+      if (skill) {
+        skillBlock = buildSkillBlock(skill, invocation.rest);
+        request = invocation.rest || `Run the /${skill.name} skill.`;
+      }
+    }
     // The hub-supplied page/element context steers the AI straight to the file
     // (fewer tool calls); the client only ever sees `content` in the transcript.
-    // For element picks, inline the clicked file so the AI skips the reads.
-    const pinnedFile = await buildPinnedFile(
-      row.context,
-      session.dir,
-      session.appDir
-    );
-    // Images the owner attached: described (never shown) to the agent, which
-    // records a destination in a git-excluded manifest; the server places the
-    // bytes after the run (see ./attachments).
+    // Inline the clicked file, or else the page (named in the message or being
+    // viewed) plus its content components, so the AI skips the reads. A skill
+    // names its own files, so only a clicked element is pinned alongside it.
+    const pinnedFile =
+      skillBlock && !parseSourceRef(row.context)
+        ? ''
+        : await buildPinnedFile(row.context, session.dir, session.appDir, {
+            message: row.content,
+            routes: repo.routes,
+          });
+    // Images the owner attached: the server picks a destination, copies the
+    // bytes into the clone now and tells the agent the URL; the agent only
+    // adds the reference (see ./attachments).
     const attachments = await loadMessageAttachments(row.id);
-    const publicRel = publicRelFor(session.dir, session.appDir);
-    const attachBlock = attachments.length
-      ? buildAttachmentsBlock(
+    const placed: Placed[] = attachments.length
+      ? await planPlacements({
+          dir: session.dir,
+          appDir: session.appDir,
+          publicRel: repo.publicRel,
           attachments,
-          publicRel,
-          await listImageDirHints(session.appDir, publicRel)
-        )
-      : '';
-    if (attachments.length) {
-      ensureGitExclude(session.dir, `${PLACEMENTS_DIR}/`);
-      await rm(join(session.dir, PLACEMENTS_DIR), { recursive: true, force: true });
-    }
-    const preamble = [row.context, pinnedFile, attachBlock]
+        })
+      : [];
+    const attachBlock = placed.length ? buildAttachmentsBlock(placed) : '';
+    const preamble = [row.context, pinnedFile, attachBlock, skillBlock]
       .filter(Boolean)
       .join('\n\n');
-    const prompt = preamble ? `${preamble}\n\n---\n\n${row.content}` : row.content;
+    const prompt = preamble ? `${preamble}\n\n---\n\n${request}` : request;
     // No resumable CLI session but prior finished messages exist (e.g. the
     // first run was killed before writing its transcript) — replay the DB
     // transcript so the fresh run keeps the conversation.
@@ -320,9 +360,8 @@ const processMessage = async (row: MessageRow) => {
       prompt: resumeId ? prompt : await withRecap(prompt),
       claudeSessionId: resumeId,
       signal: cancelController.signal,
-      onEvent: (event) => {
-        pending.push(event);
-      },
+      systemPromptPath,
+      onEvent,
     });
 
     // A --resume target can vanish (container recreated, CLI state pruned) —
@@ -343,9 +382,8 @@ const processMessage = async (row: MessageRow) => {
         prompt: await withRecap(prompt),
         claudeSessionId: null,
         signal: cancelController.signal,
-        onEvent: (event) => {
-          pending.push(event);
-        },
+        systemPromptPath,
+        onEvent,
       });
     }
 
@@ -434,23 +472,19 @@ const processMessage = async (row: MessageRow) => {
     }
 
     // Verify the change didn't break the preview (invalid JSON, page 500s)
-    // and, when images were attached, that each one was placed + referenced;
-    // if not, feed the problem back to the agent and let it repair — the
-    // client shouldn't have to paste stack traces into the chat.
-    if (changed.length || attachments.length) {
+    // and, when images were attached, that each one is referenced; if not,
+    // feed the problem back to the agent and let it repair — the client
+    // shouldn't have to paste stack traces into the chat.
+    if (changed.length || placed.length) {
       const pagePath = pagePathFromContext(row.context);
       type Problem = { kind: 'placement' | 'verify'; text: string };
       const check = async (): Promise<Problem | null> => {
-        if (attachments.length) {
-          const placement = await applyPlacements({
+        if (placed.length) {
+          const placement = await verifyPlacements({
             dir: session.dir,
-            publicRel,
-            attachments,
+            placed,
             changed,
           });
-          // applyPlacements copies files into the tree: refresh so the commit
-          // and the forbidden check see them.
-          changed = await changedFiles(session.dir);
           if (placement) return { kind: 'placement', text: placement };
         }
         if (!changed.length) return null;
@@ -473,16 +507,17 @@ const processMessage = async (row: MessageRow) => {
         );
         const repairPrompt =
           problem.kind === 'placement'
-            ? `Automated check: the uploaded image(s) were not placed correctly.\n\n${problem.text}\n\nFix this now: write \`${PLACEMENTS_FILE}\` at the repo root mapping each image id to a path under \`${publicRel}/\` (kebab-case filename, keep the extension listed for that image), and make sure the site code or CMS data references the image by its public URL path. Do not open the image files. Do not ask questions.`
+            ? `Automated check: the uploaded image(s) are not used on the site yet.\n\n${problem.text}\n\nFix this now: reference each image by its exact URL path in the component or CMS JSON where the owner asked for it. The image files already exist — do not open, search for, move or create them. Do not ask questions.`
             : `Automated check: your last change broke the live preview.\n\n${problem.text}\n\nFix this now. Keep the requested change if possible, but the preview must render again. Do not ask questions — just repair it.`;
         const repair = await runAgent({
           cwd: session.dir,
-          prompt: repairPrompt,
+          // Repair runs are fresh Gemini conversations too: give them the
+          // pinned context again so they don't rediscover the file.
+          prompt: provider === 'gemini' && preamble ? `${preamble}\n\n---\n\n${repairPrompt}` : repairPrompt,
           claudeSessionId,
           signal: cancelController.signal,
-          onEvent: (event) => {
-            pending.push(event);
-          },
+          systemPromptPath,
+          onEvent,
         });
         usage = addUsage(usage, repair.usage, !costIsCumulative);
         if (repair.gotResult && repair.claudeSessionId) {
@@ -533,11 +568,6 @@ const processMessage = async (row: MessageRow) => {
     await persistClaudeSessionId();
 
     let sha: string | null = null;
-    if (attachments.length) {
-      // Belt and braces: the manifest is git-excluded, but it must never be
-      // in the tree at commit time either way.
-      await rm(join(session.dir, PLACEMENTS_DIR), { recursive: true, force: true });
-    }
     if (changed.length) {
       const title = row.content.split('\n')[0].slice(0, 72);
       sha = await commitAndPush({
@@ -555,7 +585,7 @@ const processMessage = async (row: MessageRow) => {
       costIsCumulative
     );
     log(
-      `session ${row.sessionId}: message #${row.id} done${sha ? ` — ${sha.slice(0, 7)}` : ' (no changes)'}`
+      `session ${row.sessionId}: message #${row.id} done${sha ? ` — ${sha.slice(0, 7)}` : ' (no changes)'} [${provider} tools=${toolCalls} in=${usage.inputTokens ?? '?'} out=${usage.outputTokens ?? '?'}]`
     );
   } catch (error) {
     const message = sanitize((error as Error).message || 'unknown error');

@@ -8,6 +8,7 @@ Self-hosted AI website editor. A client opens a **live preview session** for the
   - Content-only editing scope; the AI edits inside a clone, the supervisor does all git operations.
   - Secrets, lockfiles, `package.json`, and `.github/` are blocked from any commit.
   - Per-repo provider: Gemini by default (cheap), Claude for paying clients.
+  - Token diet: the file for the page being edited (plus its components) is inlined into every request, uploaded images are placed by the server so the AI only adds the reference, and Gemini runs with a replacement system prompt, six tools and LOW thinking. `/skill` messages inline the repo's `.claude/skills/<name>/SKILL.md` for Gemini (Claude's harness expands them itself). `pnpm exec tsx scripts/gemini-probe.ts <repoId> "<message>"` measures one message's tokens and tool calls against a clone.
 
 ## Requirements
 
@@ -43,7 +44,7 @@ ghcr.io/<owner>/content-pilot:latest
 1. Create a Postgres resource and a new service from the image above.
 2. Set env vars: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` (public URL), `GITHUB_PAT`, `EDIT_TOKEN_SECRET` (shared with the hub), and the provider keys.
 3. Attach two persistent volumes:
-   - `/data/workspace` — repo clones
+   - `/data/workspace` — repo clones, plus the Gemini CLI home (`.gemini-home`), per-session Gemini system prompts (`.cp-prompts`) and staged uploads (`.uploads`)
    - `/home/nextjs/.claude` — provider auth
 4. Deploy, open the URL, create the admin account, generate an API key.
 

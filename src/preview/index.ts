@@ -3,7 +3,7 @@ import { promisify } from 'util';
 import { client } from '@/db';
 import { ensureWorkspace } from '../worker/config';
 import { checkAiAvailability } from './ai-availability';
-import { writeGeminiPolicy } from './gemini-setup';
+import { writeGeminiRuntime } from './gemini-setup';
 import { previewConfig } from './config';
 import { startProxy } from './proxy';
 import {
@@ -42,8 +42,9 @@ const main = async () => {
   // never blocks boot; it just disables AI chat with an instant per-message
   // error (see ai-availability.ts).
   await checkAiAvailability(log);
-  // Gemini sessions run under a user-tier deny policy (no shell/network).
-  writeGeminiPolicy(log);
+  // Gemini sessions run from an isolated config home: trimmed tool set, no
+  // narration/dir tree, LOW thinking, plus the deny policy (no shell/network).
+  writeGeminiRuntime(log);
 
   startProxy();
   log(

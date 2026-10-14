@@ -60,6 +60,8 @@ export const runSessionClaude = async (params: {
   onEvent: (event: unknown) => void;
   /** External abort (user "pause"); aborts the run without the timeout label. */
   signal?: AbortSignal;
+  /** Gemini-only (its replacement system prompt file); ignored here. */
+  systemPromptPath?: string;
 }): Promise<SessionClaudeRun> => {
   let resultText = '';
   let claudeSessionId = params.claudeSessionId;
