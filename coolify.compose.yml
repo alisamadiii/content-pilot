@@ -21,6 +21,23 @@ services:
     volumes:
       - cp-workspace:/data/workspace
       - cp-claude:/home/nextjs/.claude
+    # Wildcard preview router: *.alisamadii.dev -> the in-container proxy on 3020
+    # (src/preview/proxy.ts). Coolify's Domains field / SERVICE_FQDN magic vars
+    # reject wildcards, so this is wired as raw Traefik labels. TLS is terminated
+    # at Cloudflare (orange cloud), so the http router covers Flexible mode and
+    # the https router (Traefik default cert) covers Full mode. Traefik v3.6
+    # HostRegexp uses Go-regexp syntax. The .com admin domain is routed by
+    # Coolify's own generated labels and is unaffected.
+    labels:
+      - traefik.enable=true
+      - 'traefik.http.routers.cp-preview-http.rule=HostRegexp(`^[a-z0-9-]+\.alisamadii\.dev$`)'
+      - traefik.http.routers.cp-preview-http.entryPoints=http
+      - traefik.http.routers.cp-preview-http.service=cp-preview
+      - 'traefik.http.routers.cp-preview-https.rule=HostRegexp(`^[a-z0-9-]+\.alisamadii\.dev$`)'
+      - traefik.http.routers.cp-preview-https.entryPoints=https
+      - traefik.http.routers.cp-preview-https.tls=true
+      - traefik.http.routers.cp-preview-https.service=cp-preview
+      - traefik.http.services.cp-preview.loadbalancer.server.port=3020
     depends_on:
       postgres:
         condition: service_healthy
