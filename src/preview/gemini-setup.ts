@@ -25,6 +25,15 @@ toolName = ["run_shell_command", "web_fetch", "web_search", "google_web_search"]
 decision = "deny"
 priority = 200
 interactive = false
+
+# Chat uploads are described to the agent, never shown (token cost). An
+# argsPattern rule denies the call without hiding read_file itself.
+[[rule]]
+toolName = ["read_file", "read_many_files"]
+argsPattern = '\\.(webp|jpe?g|png|gif|avif)"'
+decision = "deny"
+priority = 210
+interactive = false
 `;
 
 /** Absolute path to the deny policy — passed to the CLI via --admin-policy. */

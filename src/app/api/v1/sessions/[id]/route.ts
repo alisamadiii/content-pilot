@@ -1,11 +1,12 @@
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { client, db } from '@/db';
-import { previewMessage, previewSession } from '@/db/schema';
+import { previewAttachment, previewMessage, previewSession } from '@/db/schema';
 import {
   authenticateSessionRequest,
   sessionCorsHeaders,
 } from '@/lib/session-auth';
+import { removeSessionUploads } from '@/lib/uploads';
 import { previewConfig, previewUrlFor } from '@/preview/config';
 
 const actionSchema = z.discriminatedUnion('action', [
@@ -71,6 +72,28 @@ export const GET = async (
     .where(eq(previewMessage.sessionId, id))
     .orderBy(asc(previewMessage.id))
     .limit(200);
+  // Images attached to user messages, for the transcript thumbnails. The hub
+  // fetches the bytes from /uploads/<id>; description stays server-side.
+  const attachmentRows = await db
+    .select({
+      id: previewAttachment.id,
+      messageId: previewAttachment.messageId,
+      originalName: previewAttachment.originalName,
+      width: previewAttachment.width,
+      height: previewAttachment.height,
+    })
+    .from(previewAttachment)
+    .where(
+      and(eq(previewAttachment.sessionId, id), isNotNull(previewAttachment.messageId))
+    )
+    .orderBy(asc(previewAttachment.createdAt));
+  const attachmentsByMessage = new Map<number, Array<Omit<(typeof attachmentRows)[number], 'messageId'>>>();
+  for (const { messageId, ...attachment } of attachmentRows) {
+    if (messageId === null) continue;
+    const list = attachmentsByMessage.get(messageId) ?? [];
+    list.push(attachment);
+    attachmentsByMessage.set(messageId, list);
+  }
   return Response.json(
     {
       id: row.id,
@@ -82,7 +105,10 @@ export const GET = async (
       createdAt: row.createdAt,
       lastActivityAt: row.lastActivityAt,
       idleMinutes: previewConfig.idleMinutes,
-      messages,
+      messages: messages.map((message) => ({
+        ...message,
+        attachments: attachmentsByMessage.get(message.id) ?? [],
+      })),
     },
     { status: 200, headers }
   );
@@ -142,6 +168,12 @@ export const POST = async (
     .update(previewSession)
     .set({ status, closedAt: new Date(), updatedAt: new Date() })
     .where(eq(previewSession.id, id));
+  // Uploaded images die with the chat. The supervisor's teardown also does
+  // this, but only for sessions it still has live — a paused session closed
+  // from the hub never reaches it, so the route cleans up as well (idempotent;
+  // the staging dir is on the shared workspace volume).
+  await db.delete(previewAttachment).where(eq(previewAttachment.sessionId, id));
+  await removeSessionUploads(id);
   try {
     await client.notify('cp_preview', '');
   } catch {

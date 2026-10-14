@@ -1,11 +1,26 @@
 import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
-import { readFile } from 'fs/promises';
+import { readFile, rm } from 'fs/promises';
 import { join } from 'path';
 import { db } from '@/db';
 import { previewMessage, previewSession } from '@/db/schema';
 import { findSessionForbiddenPaths } from '../worker/guardrails';
 import { aiUnavailableReason } from './ai-availability';
-import { changedFiles, commitAndPush, discardChanges, sanitize } from '../worker/git';
+import {
+  changedFiles,
+  commitAndPush,
+  discardChanges,
+  ensureGitExclude,
+  sanitize,
+} from '../worker/git';
+import {
+  applyPlacements,
+  buildAttachmentsBlock,
+  listImageDirHints,
+  loadMessageAttachments,
+  PLACEMENTS_DIR,
+  PLACEMENTS_FILE,
+  publicRelFor,
+} from './attachments';
 import type { ClaudeUsage } from './usage';
 import { previewConfig } from './config';
 import { emitEvent, emitEvents } from './events';
@@ -262,9 +277,26 @@ const processMessage = async (row: MessageRow) => {
       session.dir,
       session.appDir
     );
-    const prompt = row.context
-      ? `${row.context}${pinnedFile ? `\n\n${pinnedFile}` : ''}\n\n---\n\n${row.content}`
-      : row.content;
+    // Images the owner attached: described (never shown) to the agent, which
+    // records a destination in a git-excluded manifest; the server places the
+    // bytes after the run (see ./attachments).
+    const attachments = await loadMessageAttachments(row.id);
+    const publicRel = publicRelFor(session.dir, session.appDir);
+    const attachBlock = attachments.length
+      ? buildAttachmentsBlock(
+          attachments,
+          publicRel,
+          await listImageDirHints(session.appDir, publicRel)
+        )
+      : '';
+    if (attachments.length) {
+      ensureGitExclude(session.dir, `${PLACEMENTS_DIR}/`);
+      await rm(join(session.dir, PLACEMENTS_DIR), { recursive: true, force: true });
+    }
+    const preamble = [row.context, pinnedFile, attachBlock]
+      .filter(Boolean)
+      .join('\n\n');
+    const prompt = preamble ? `${preamble}\n\n---\n\n${row.content}` : row.content;
     // No resumable CLI session but prior finished messages exist (e.g. the
     // first run was killed before writing its transcript) — replay the DB
     // transcript so the fresh run keeps the conversation.
@@ -401,28 +433,51 @@ const processMessage = async (row: MessageRow) => {
       return;
     }
 
-    // Verify the change didn't break the preview (invalid JSON, page 500s);
-    // if it did, feed the error back to Claude and let it repair — the client
-    // shouldn't have to paste stack traces into the chat.
-    if (changed.length) {
+    // Verify the change didn't break the preview (invalid JSON, page 500s)
+    // and, when images were attached, that each one was placed + referenced;
+    // if not, feed the problem back to the agent and let it repair — the
+    // client shouldn't have to paste stack traces into the chat.
+    if (changed.length || attachments.length) {
       const pagePath = pagePathFromContext(row.context);
-      let problem = await verifyChanges(
-        session.dir,
-        session.port,
-        changed,
-        pagePath
-      );
+      type Problem = { kind: 'placement' | 'verify'; text: string };
+      const check = async (): Promise<Problem | null> => {
+        if (attachments.length) {
+          const placement = await applyPlacements({
+            dir: session.dir,
+            publicRel,
+            attachments,
+            changed,
+          });
+          // applyPlacements copies files into the tree: refresh so the commit
+          // and the forbidden check see them.
+          changed = await changedFiles(session.dir);
+          if (placement) return { kind: 'placement', text: placement };
+        }
+        if (!changed.length) return null;
+        const verify = await verifyChanges(
+          session.dir,
+          session.port,
+          changed,
+          pagePath
+        );
+        return verify ? { kind: 'verify', text: verify } : null;
+      };
+      let problem = await check();
       for (
         let attempt = 1;
         problem && attempt <= MAX_REPAIR_RUNS;
         attempt++
       ) {
         log(
-          `session ${row.sessionId}: preview broken after edit (repair ${attempt}/${MAX_REPAIR_RUNS}) — ${problem.slice(0, 200)}`
+          `session ${row.sessionId}: ${problem.kind === 'placement' ? 'upload not placed' : 'preview broken'} after edit (repair ${attempt}/${MAX_REPAIR_RUNS}) — ${problem.text.slice(0, 200)}`
         );
+        const repairPrompt =
+          problem.kind === 'placement'
+            ? `Automated check: the uploaded image(s) were not placed correctly.\n\n${problem.text}\n\nFix this now: write \`${PLACEMENTS_FILE}\` at the repo root mapping each image id to a path under \`${publicRel}/\` (kebab-case filename, keep the extension listed for that image), and make sure the site code or CMS data references the image by its public URL path. Do not open the image files. Do not ask questions.`
+            : `Automated check: your last change broke the live preview.\n\n${problem.text}\n\nFix this now. Keep the requested change if possible, but the preview must render again. Do not ask questions — just repair it.`;
         const repair = await runAgent({
           cwd: session.dir,
-          prompt: `Automated check: your last change broke the live preview.\n\n${problem}\n\nFix this now. Keep the requested change if possible, but the preview must render again. Do not ask questions — just repair it.`,
+          prompt: repairPrompt,
           claudeSessionId,
           signal: cancelController.signal,
           onEvent: (event) => {
@@ -441,33 +496,31 @@ const processMessage = async (row: MessageRow) => {
           await rejectForbidden(forbiddenNow);
           return;
         }
-        problem = await verifyChanges(
-          session.dir,
-          session.port,
-          changed,
-          pagePath
-        );
+        problem = await check();
       }
       if (problem) {
         log(
-          `session ${row.sessionId}: still broken after ${MAX_REPAIR_RUNS} repairs — reverting`
+          `session ${row.sessionId}: still ${problem.kind === 'placement' ? 'unplaced' : 'broken'} after ${MAX_REPAIR_RUNS} repairs — reverting`
         );
         await persistClaudeSessionId();
         await discardChanges(session.dir);
         // The site owner asked to see the real error, so the client-facing
         // message carries it (sanitized, capped) behind a plain-language why.
-        const why = problem.includes('is no longer valid JSON')
-          ? 'The change was undone because it made a content file invalid, which would have broken the site.'
-          : 'The change was undone because a page on your site stopped loading after it was applied.';
-        const detail = sanitizeForClient(problem, session.dir).slice(0, 500);
+        const why =
+          problem.kind === 'placement'
+            ? 'The change was undone because the uploaded image could not be placed on the site.'
+            : problem.text.includes('is no longer valid JSON')
+              ? 'The change was undone because it made a content file invalid, which would have broken the site.'
+              : 'The change was undone because a page on your site stopped loading after it was applied.';
+        const detail = sanitizeForClient(problem.text, session.dir).slice(0, 500);
         // reply=null — the error row already carries the message; a matching
         // assistant bubble would just duplicate it in the transcript.
         await finishMessage(
           row,
           {
             status: 'failed',
-            error: `${why}\n\nThe error was: ${detail}\n\nNothing was applied to your site. You can try rephrasing the request, or share this error with your developer.`,
-            errorDetail: sanitize(problem),
+            error: `${why}\n\nThe error was: ${detail}\n\nNothing was applied to your site. You can try again, or share this error with your developer.`,
+            errorDetail: sanitize(problem.text),
             ...usage,
           },
           null,
@@ -480,6 +533,11 @@ const processMessage = async (row: MessageRow) => {
     await persistClaudeSessionId();
 
     let sha: string | null = null;
+    if (attachments.length) {
+      // Belt and braces: the manifest is git-excluded, but it must never be
+      // in the tree at commit time either way.
+      await rm(join(session.dir, PLACEMENTS_DIR), { recursive: true, force: true });
+    }
     if (changed.length) {
       const title = row.content.split('\n')[0].slice(0, 72);
       sha = await commitAndPush({

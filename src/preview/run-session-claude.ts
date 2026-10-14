@@ -1,7 +1,32 @@
-import { query, AbortError } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query,
+  AbortError,
+  type HookCallback,
+  type PreToolUseHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 import { SESSION_PROMPT } from '../worker/guardrails';
 import type { ClaudeUsage } from './usage';
 import { previewConfig } from './config';
+
+// Chat uploads are described to the agent, never shown (token cost); the
+// bytes also live outside cwd. This hook is the in-process backstop for any
+// other image in the repo: Read returns images as vision content, so deny it.
+const IMAGE_PATH = /\.(webp|jpe?g|png|gif|avif)$/i;
+const denyImageReads: HookCallback = async (input) => {
+  const pre = input as PreToolUseHookInput;
+  const path = String(
+    (pre.tool_input as { file_path?: unknown } | undefined)?.file_path ?? ''
+  );
+  if (!IMAGE_PATH.test(path)) return {};
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason:
+        'Image files must not be opened. Use the description given in the request instead.',
+    },
+  };
+};
 
 export type SessionClaudeRun = {
   resultText: string;
@@ -72,6 +97,7 @@ export const runSessionClaude = async (params: {
       // could reach outside the working tree is removed from context entirely.
       disallowedTools: ['Bash', 'WebFetch', 'WebSearch', 'Task'],
       permissionMode: 'acceptEdits',
+      hooks: { PreToolUse: [{ matcher: 'Read', hooks: [denyImageReads] }] },
       // Load the client repo's .claude/ tree (skills, commands) from cwd.
       settingSources: ['project'],
       // Auto-configures the Skill tool; without this the tool allowlist above

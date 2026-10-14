@@ -7,12 +7,15 @@ import { createServer } from 'net';
 import { join } from 'path';
 import { db } from '@/db';
 import {
+  previewAttachment,
   previewEvent,
   previewMessage,
   previewSession,
   type PreviewSessionStatus,
 } from '@/db/schema';
 import { getAppDir } from '@/lib/settings';
+import { removeSessionUploads } from '@/lib/uploads';
+import { PLACEMENTS_DIR } from './attachments';
 import {
   discardChanges,
   resetBranchToDefault,
@@ -456,6 +459,10 @@ export const startSession = async (row: SessionRow) => {
     // edit — otherwise every message's changed-files check would see the
     // artifact, trip the forbidden-path floor, and revert Claude's real edit.
     await discardChanges(dir);
+    // A run killed mid-flight can leave the agent's placements manifest
+    // behind (git-excluded, so clean -fd keeps it). Never let a stale one
+    // steer the next message.
+    await rm(join(dir, PLACEMENTS_DIR), { recursive: true, force: true });
 
     // Inject the preview-only AI analyzer (stamps data-cms-src per framework,
     // powers click-to-point-the-AI). Git-invisible and never modifies the real
@@ -561,6 +568,10 @@ export const resetSession = async (row: SessionRow) => {
   // queued messages, so nothing re-applies on top of the reset).
   await db.delete(previewMessage).where(eq(previewMessage.sessionId, row.id));
   await db
+    .delete(previewAttachment)
+    .where(eq(previewAttachment.sessionId, row.id));
+  await removeSessionUploads(row.id);
+  await db
     .update(previewSession)
     .set({
       resetRequestedAt: null,
@@ -598,5 +609,8 @@ export const teardownSession = async (
   });
   // The SSE store is only needed while the session lives.
   await db.delete(previewEvent).where(eq(previewEvent.sessionId, id));
+  // Uploaded images only matter while the chat lives.
+  await db.delete(previewAttachment).where(eq(previewAttachment.sessionId, id));
+  await removeSessionUploads(id);
   log(`session ${id}: torn down (${status})`);
 };

@@ -221,6 +221,41 @@ export const previewMessage = pgTable(
   (table) => [index('idx_preview_message_session').on(table.sessionId, table.id)]
 );
 
+// Images the site owner attached in the hub chat. Bytes live OUTSIDE the
+// repo clone (`<WORKSPACE_DIR>/.uploads/<sessionId>/<id>.<ext>`) so they can
+// never reach `git add -A` and neither agent can open them; the agent only
+// ever sees the owner's `description`. After a successful run the file is
+// copied into the clone at `placedPath` (chosen by the agent) and committed.
+// Rows + bytes are dropped on session reset/teardown.
+export const previewAttachment = pgTable(
+  'preview_attachment',
+  {
+    // 10-char lowercase alnum; doubles as the staged file name stem.
+    id: text('id').primaryKey(),
+    sessionId: text('session_id').notNull(),
+    // Null until the message carrying it is posted (bound in that insert).
+    messageId: integer('message_id'),
+    originalName: text('original_name').notNull(),
+    // image/webp | image/jpeg | image/png | image/gif (magic-byte sniffed)
+    mime: text('mime').notNull(),
+    bytes: integer('bytes').notNull(),
+    width: integer('width').notNull(),
+    height: integer('height').notNull(),
+    // Owner-written one-liner: the AI's only view of the image (alt text,
+    // placement). Required at send time.
+    description: text('description').notNull().default(''),
+    // `<sessionId>/<id>.<ext>`, relative to uploadsRoot().
+    stagedPath: text('staged_path').notNull(),
+    // Repo-root-relative destination once placed, e.g.
+    // `public/images/projects/ortega-kitchen-remodel.webp`. Informational.
+    placedPath: text('placed_path'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_preview_attachment_session').on(table.sessionId, table.messageId),
+  ]
+);
+
 export const PREVIEW_EVENT_TYPE_VALUES = [
   'status',
   'claude',

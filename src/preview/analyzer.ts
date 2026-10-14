@@ -1,12 +1,12 @@
 import { execFileSync } from 'child_process';
 import {
-  appendFileSync,
   cpSync,
   existsSync,
   readFileSync,
   writeFileSync,
 } from 'fs';
 import { extname, join } from 'path';
+import { ensureGitExclude } from '../worker/git';
 import {
   type BootPlan,
   detectFramework,
@@ -19,20 +19,6 @@ import {
 // supervisor runs from the content-pilot repo root (tsx src/preview/index.ts),
 // so cwd is the repo root in both local dev and the container (WORKDIR /app).
 const ANALYZER_SRC = join(process.cwd(), 'ai-analyzer');
-
-const ensureGitExclude = (dir: string, pattern: string) => {
-  const excludePath = join(dir, '.git', 'info', 'exclude');
-  try {
-    const current = existsSync(excludePath)
-      ? readFileSync(excludePath, 'utf8')
-      : '';
-    if (current.split('\n').some((line) => line.trim() === pattern)) return;
-    const prefix = !current || current.endsWith('\n') ? '' : '\n';
-    appendFileSync(excludePath, `${prefix}${pattern}\n`);
-  } catch {
-    // Best-effort — the client's committed .gitignore is the primary guard.
-  }
-};
 
 // The HMR block is load-bearing on both Vite paths: Vite's client defaults its
 // websocket to the dev server's OWN port (e.g. wss://<id>.<domain>:4100), which

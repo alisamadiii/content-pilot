@@ -1,4 +1,7 @@
 import { randomBytes } from 'crypto';
+import { eq } from 'drizzle-orm';
+import { db } from '@/db';
+import { previewSession } from '@/db/schema';
 import { verifyApiKey } from './api-key';
 import { verifyEditToken, type EditTokenPayload } from './edit-token';
 
@@ -32,6 +35,70 @@ export const authenticateSessionRequest = async (
   if (edit) return { kind: 'edit-token', payload: edit };
 
   return null;
+};
+
+/** Session states that no longer accept chat input (messages, uploads). */
+export const TERMINAL_SESSION_STATUSES = [
+  'needs_config',
+  'failed',
+  'closed',
+  'published',
+  'expired',
+] as const;
+
+export const SESSION_ENDED_MESSAGE =
+  'This editing session has ended. Please reopen the project to start a new one.';
+
+type SessionRow = typeof previewSession.$inferSelect;
+
+/**
+ * The auth + lookup preamble shared by every per-session write route:
+ * credential check, session row, repo-scope check for edit tokens, and (unless
+ * `allowTerminal`) a 409 for sessions that have ended. Returns either the row
+ * or a ready-to-return error Response carrying the CORS headers.
+ */
+export const loadSessionForEdit = async (
+  request: Request,
+  id: string,
+  options: { allowTerminal?: boolean } = {}
+): Promise<
+  | { session: SessionRow; auth: SessionAuth; headers: Record<string, string> }
+  | { response: Response }
+> => {
+  const headers = sessionCorsHeaders(request.headers.get('origin'));
+  const auth = await authenticateSessionRequest(request);
+  if (!auth) {
+    return {
+      response: Response.json({ error: 'Unauthorized' }, { status: 401, headers }),
+    };
+  }
+  const [session] = await db
+    .select()
+    .from(previewSession)
+    .where(eq(previewSession.id, id))
+    .limit(1);
+  if (!session) {
+    return {
+      response: Response.json({ error: 'Not found' }, { status: 404, headers }),
+    };
+  }
+  if (auth.kind === 'edit-token' && auth.payload.repoId !== session.repoId) {
+    return {
+      response: Response.json({ error: 'Forbidden' }, { status: 403, headers }),
+    };
+  }
+  if (
+    !options.allowTerminal &&
+    (TERMINAL_SESSION_STATUSES as readonly string[]).includes(session.status)
+  ) {
+    return {
+      response: Response.json(
+        { error: SESSION_ENDED_MESSAGE },
+        { status: 409, headers }
+      ),
+    };
+  }
+  return { session, auth, headers };
 };
 
 export const sessionCorsHeaders = (origin: string | null) => ({

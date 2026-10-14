@@ -1,5 +1,5 @@
 import { execFile } from 'child_process';
-import { existsSync } from 'fs';
+import { appendFileSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { promisify } from 'util';
 import { config } from './config';
@@ -50,6 +50,26 @@ export const git = async (cwd: string, args: string[], withAuth = false) => {
 };
 
 export const repoDir = (repoId: number) => join(config.workspaceDir, String(repoId));
+
+/**
+ * Makes `pattern` git-invisible for this clone via `.git/info/exclude` (never
+ * the client's committed .gitignore). Excluded paths survive `clean -fd` and
+ * never reach `add -A`; used for the preview analyzer wrappers and the chat
+ * upload placements manifest.
+ */
+export const ensureGitExclude = (dir: string, pattern: string) => {
+  const excludePath = join(dir, '.git', 'info', 'exclude');
+  try {
+    const current = existsSync(excludePath)
+      ? readFileSync(excludePath, 'utf8')
+      : '';
+    if (current.split('\n').some((line) => line.trim() === pattern)) return;
+    const prefix = !current || current.endsWith('\n') ? '' : '\n';
+    appendFileSync(excludePath, `${prefix}${pattern}\n`);
+  } catch {
+    // Best-effort — the client's committed .gitignore is the primary guard.
+  }
+};
 
 /** The repo's default branch (origin/HEAD), falling back to "main". */
 const defaultBranch = async (dir: string) => {
