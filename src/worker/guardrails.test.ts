@@ -1,0 +1,95 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { findSessionForbiddenPaths, SESSION_PROMPT } from './guardrails';
+
+// The denylist is the last line between an AI edit and a committed secret or a
+// broken preview. Every pattern below guards a real incident class.
+
+test('secrets: .env at the root and in any subfolder are forbidden', () => {
+  assert.deepEqual(
+    findSessionForbiddenPaths(['.env', '.env.local', 'apps/web/.env', 'src/.env.production']),
+    ['.env', '.env.local', 'apps/web/.env', 'src/.env.production']
+  );
+});
+
+test('a file merely containing "env" in its name is allowed', () => {
+  assert.deepEqual(findSessionForbiddenPaths(['src/environment.ts', 'docs/env-setup.md']), []);
+});
+
+test('package.json is forbidden at any depth, but only the exact file', () => {
+  assert.deepEqual(
+    findSessionForbiddenPaths(['package.json', 'marketing/package.json', 'src/package.json.bak']),
+    ['package.json', 'marketing/package.json']
+  );
+});
+
+test('lockfiles for npm, pnpm, yarn and bun are forbidden', () => {
+  assert.deepEqual(
+    findSessionForbiddenPaths([
+      'package-lock.json',
+      'pnpm-lock.yaml',
+      'yarn.lock',
+      'bun.lockb',
+      'bun.lock',
+      'app/pnpm-lock.yaml',
+    ]),
+    ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock', 'app/pnpm-lock.yaml']
+  );
+});
+
+test('lockfile rule is anchored: Block.astro, yarn.lock.bak, xpnpm-lock.yaml all pass', () => {
+  assert.deepEqual(
+    findSessionForbiddenPaths([
+      'src/components/Block.astro',
+      'src/lock.ts',
+      'docs/yarn.lock.bak',
+      'src/xpnpm-lock.yaml',
+      'mypackage-lock.json',
+    ]),
+    []
+  );
+});
+
+test('.github/ is forbidden only at the repo root', () => {
+  assert.deepEqual(
+    findSessionForbiddenPaths(['.github/workflows/ci.yml', 'docs/.github/x.md']),
+    ['.github/workflows/ci.yml']
+  );
+});
+
+test('node_modules is forbidden at any depth', () => {
+  assert.deepEqual(
+    findSessionForbiddenPaths(['node_modules/x/index.js', 'app/node_modules/y.js']),
+    ['node_modules/x/index.js', 'app/node_modules/y.js']
+  );
+});
+
+test('ordinary content, CMS and config-looking files pass through', () => {
+  assert.deepEqual(
+    findSessionForbiddenPaths([
+      '_site.json',
+      '_collections/team.json',
+      'src/pages/index.astro',
+      'public/images/hero.webp',
+      'astro.config.mjs',
+      'tsconfig.json',
+    ]),
+    []
+  );
+});
+
+test('result preserves input order and only the offending paths', () => {
+  assert.deepEqual(
+    findSessionForbiddenPaths(['a.ts', 'package.json', 'b.ts', '.env']),
+    ['package.json', '.env']
+  );
+  assert.deepEqual(findSessionForbiddenPaths([]), []);
+});
+
+test('session prompt carries the two forbidden actions and the no-image-read rule', () => {
+  assert.match(SESSION_PROMPT, /FORBIDDEN — exactly two things/);
+  assert.match(SESSION_PROMPT, /Redesigning an entire page/);
+  assert.match(SESSION_PROMPT, /Creating or deleting pages or routes/);
+  assert.match(SESSION_PROMPT, /Never open, read, or view image files/);
+  assert.match(SESSION_PROMPT, /strictly valid JSON/);
+});

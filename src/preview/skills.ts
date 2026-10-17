@@ -1,4 +1,4 @@
-import { readFile } from 'fs/promises';
+import { readdir, readFile } from 'fs/promises';
 import { join, relative } from 'path';
 
 /**
@@ -86,4 +86,70 @@ export const scrubSkillJargon = (text: string, skillName: string | null) => {
       );
   }
   return out.replace(/[ \t]{2,}/g, ' ').replace(/ +([.,!?])/g, '$1').trim();
+};
+
+// ---------------------------------------------------------------------------
+// Catalog for the hub's "/" menu (used by the skills API route).
+// ---------------------------------------------------------------------------
+
+export type SkillInfo = { name: string; description: string };
+
+/**
+ * Minimal SKILL.md frontmatter reader — just `name:` and `description:`
+ * between the first `---` pair. Skills are authored by us in client repos, so
+ * a full YAML parser is overkill; anything unparseable is skipped.
+ */
+export const parseSkillFrontmatter = (raw: string): SkillInfo | null => {
+  const match = raw.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return null;
+  const fields: Record<string, string> = {};
+  for (const line of match[1].split('\n')) {
+    const kv = line.match(/^(name|description):\s*(.*)$/);
+    if (kv) fields[kv[1]] = kv[2].trim().replace(/^["']|["']$/g, '');
+  }
+  if (!fields.name) return null;
+  return { name: fields.name, description: fields.description ?? '' };
+};
+
+/** Every `<base>/.claude/skills/<entry>/SKILL.md` with valid frontmatter. */
+export const scanSkillsDir = async (base: string): Promise<SkillInfo[]> => {
+  const skillsDir = join(base, '.claude', 'skills');
+  let entries: string[];
+  try {
+    entries = await readdir(skillsDir);
+  } catch {
+    return [];
+  }
+  const found: SkillInfo[] = [];
+  for (const entry of entries) {
+    let raw: string;
+    try {
+      raw = await readFile(join(skillsDir, entry, 'SKILL.md'), 'utf8');
+    } catch {
+      continue;
+    }
+    const skill = parseSkillFrontmatter(raw);
+    if (skill) found.push(skill);
+  }
+  return found;
+};
+
+/**
+ * Catalog for a clone: root `.claude/skills/` plus the admin-set app folder's,
+ * root winning on name clashes, sorted by name.
+ */
+export const listSkills = async (
+  dir: string,
+  appDir: string | null
+): Promise<SkillInfo[]> => {
+  const skills = new Map<string, SkillInfo>();
+  if (appDir) {
+    for (const skill of await scanSkillsDir(join(dir, appDir))) {
+      skills.set(skill.name, skill);
+    }
+  }
+  for (const skill of await scanSkillsDir(dir)) {
+    skills.set(skill.name, skill); // root wins
+  }
+  return [...skills.values()].sort((a, b) => a.name.localeCompare(b.name));
 };

@@ -25,7 +25,8 @@ export const checkAiAvailability = async (
   await Promise.all([checkClaude(log), checkGemini(log)]);
 };
 
-const checkClaude = async (log: (message: string) => void): Promise<void> => {
+export const checkClaude = async (log: (message: string) => void): Promise<void> => {
+  unavailableReason.claude = null;
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {
     unavailableReason.claude =
@@ -51,7 +52,8 @@ const checkClaude = async (log: (message: string) => void): Promise<void> => {
   }
 };
 
-const checkGemini = async (log: (message: string) => void): Promise<void> => {
+export const checkGemini = async (log: (message: string) => void): Promise<void> => {
+  unavailableReason.gemini = null;
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     unavailableReason.gemini =

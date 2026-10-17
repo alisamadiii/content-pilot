@@ -58,3 +58,9 @@ test('.astro is skipped when no astro annotator is provided (non-Astro Vite)', a
   );
   assert.equal(out, null);
 });
+
+test('plugin is enforce:pre with a pre-ordered transform hook (must see raw source)', () => {
+  const plugin = mkPlugin() as unknown as { enforce: string; transform: { order: string } };
+  assert.equal(plugin.enforce, 'pre');
+  assert.equal(plugin.transform.order, 'pre');
+});

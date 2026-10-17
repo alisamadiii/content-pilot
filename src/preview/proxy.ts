@@ -31,13 +31,14 @@ const OVERLAY_TAG = (() => {
   }
 })();
 
-const injectOverlay = (html: string): string => {
-  if (!OVERLAY_TAG) return html;
+/** Inlines the overlay before </head> (else </body>, else appended). Exported for tests. */
+export const injectOverlay = (html: string, tag: string = OVERLAY_TAG): string => {
+  if (!tag) return html;
   const head = html.search(/<\/head>/i);
-  if (head !== -1) return html.slice(0, head) + OVERLAY_TAG + html.slice(head);
+  if (head !== -1) return html.slice(0, head) + tag + html.slice(head);
   const body = html.search(/<\/body>/i);
-  if (body !== -1) return html.slice(0, body) + OVERLAY_TAG + html.slice(body);
-  return html + OVERLAY_TAG;
+  if (body !== -1) return html.slice(0, body) + tag + html.slice(body);
+  return html + tag;
 };
 
 // Note: proxy traffic deliberately does NOT count as session activity. Idle
@@ -51,8 +52,9 @@ export const unregisterRoute = (sessionId: string) => {
   routes.delete(sessionId);
 };
 
-const sessionIdFromHost = (req: IncomingMessage) => {
-  const host = req.headers.host || '';
+/** Leftmost Host label, lowercased, port stripped. Exported for tests. */
+export const sessionIdFromHost = (host: string | undefined) => {
+  host = host || '';
   const label = host.split('.')[0]?.split(':')[0]?.toLowerCase() || '';
   return label;
 };
@@ -62,7 +64,7 @@ const endedPage = `<!doctype html><meta charset="utf-8"><title>Preview ended</ti
 <div style="text-align:center"><h1 style="font-size:1.25rem">This preview session has ended</h1>
 <p style="color:#666">Close this tab and start a new editing session from your dashboard.</p></div></body>`;
 
-export const startProxy = () => {
+export const startProxy = (port: number = previewConfig.proxyPort) => {
   const proxy = httpProxy.createProxyServer({
     ws: true,
     changeOrigin: true,
@@ -102,7 +104,11 @@ export const startProxy = () => {
         const html = injectOverlay(Buffer.concat(chunks).toString('utf8'));
         const body = Buffer.from(html, 'utf8');
         // Body length changed — drop upstream content-length and set our own.
+        // The body is buffered, so a chunked upstream (Next/Astro stream HTML)
+        // must lose its transfer-encoding too: both headers together is an
+        // invalid response that strict clients reject.
         delete headers['content-length'];
+        delete headers['transfer-encoding'];
         headers['content-length'] = String(body.length);
         res.writeHead(status, headers);
         res.end(body);
@@ -125,7 +131,7 @@ export const startProxy = () => {
   });
 
   const server = createServer((req, res) => {
-    const id = sessionIdFromHost(req);
+    const id = sessionIdFromHost(req.headers.host);
     const port = routes.get(id);
     if (!port) {
       res.writeHead(404, { 'Content-Type': 'text/html' });
@@ -136,7 +142,7 @@ export const startProxy = () => {
   });
 
   server.on('upgrade', (req, socket, head) => {
-    const id = sessionIdFromHost(req);
+    const id = sessionIdFromHost(req.headers.host);
     const port = routes.get(id);
     if (!port) {
       socket.destroy();
@@ -145,6 +151,6 @@ export const startProxy = () => {
     proxy.ws(req, socket, head, { target: `http://127.0.0.1:${port}` });
   });
 
-  server.listen(previewConfig.proxyPort, '0.0.0.0');
+  server.listen(port, '0.0.0.0');
   return server;
 };

@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { config } from '../worker/config';
 import { previewConfig } from './config';
 
@@ -93,7 +93,20 @@ const modelAliases = (model: string) => ({
   },
 });
 
-export const buildGeminiSettings = (model: string) => ({
+/**
+ * Our one custom tool (bulk literal replace) as a stdio MCP server. `trust`
+ * skips the per-call confirmation headless runs would otherwise auto-deny.
+ * The CLI spawns it with the session clone as cwd — that is the server's
+ * only input. Paths are absolute: settings live outside the repo.
+ */
+export const pilotMcpServer = (root = process.cwd()) => ({
+  command: resolve(root, 'node_modules', '.bin', 'tsx'),
+  args: [resolve(root, 'src', 'preview', 'replace-mcp-server.ts')],
+  trust: true,
+  timeout: 30_000,
+});
+
+export const buildGeminiSettings = (model: string, root = process.cwd()) => ({
   general: {
     topicUpdateNarration: false,
     enableAutoUpdate: false,
@@ -108,7 +121,7 @@ export const buildGeminiSettings = (model: string) => ({
   model: { maxSessionTurns: GEMINI_MAX_TURNS, skipNextSpeakerCheck: true },
   experimental: { enableAgents: false, gemma: false },
   modelConfigs: { aliases: modelAliases(model) },
-  mcpServers: {},
+  mcpServers: { pilot: pilotMcpServer(root) },
 });
 
 export const writeGeminiRuntime = (log: (message: string) => void): void => {

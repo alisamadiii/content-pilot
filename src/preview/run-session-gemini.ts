@@ -39,6 +39,8 @@ export const TOOL_NAME_MAP: Record<string, string> = {
   glob: 'Glob',
   grep_search: 'Grep',
   search_file_content: 'Grep',
+  // Our stdio MCP tool (gemini-setup.ts) — same name the Claude SDK exposes.
+  replace_in_files: 'mcp__pilot__replace_in_files',
 };
 
 const firstString = (
@@ -71,7 +73,7 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
 /** Pull token counts from wherever the CLI hangs them (stats / usage / metadata). */
 export const extractTokens = (
   evt: Record<string, unknown>
-): { input: number | null; output: number | null } => {
+): { input: number | null; output: number | null; cached: number | null } => {
   const buckets = [
     evt,
     asRecord(evt.stats),
@@ -82,7 +84,16 @@ export const extractTokens = (
   ].filter(Boolean) as Record<string, unknown>[];
   let input: number | null = null;
   let output: number | null = null;
+  let cached: number | null = null;
   for (const bucket of buckets) {
+    cached =
+      cached ??
+      firstNumber(bucket, [
+        'cached_content_token_count',
+        'cachedContentTokenCount',
+        'cache_read_input_tokens',
+        'cached',
+      ]);
     input =
       input ??
       firstNumber(bucket, [
@@ -103,7 +114,7 @@ export const extractTokens = (
         'output',
       ]);
   }
-  return { input, output };
+  return { input, output, cached };
 };
 
 /** A raw Gemini stream-json event, normalized to a provider-agnostic shape. */
@@ -117,6 +128,7 @@ export type GeminiInterpretation =
       model: string | null;
       input: number | null;
       output: number | null;
+      cached: number | null;
       failed: boolean;
       error: string | null;
     }
@@ -169,9 +181,11 @@ export const interpretGeminiEvent = (
         'path',
       ]);
       const pattern = firstString(rawInput, ['pattern', 'query', 'glob']);
+      const find = firstString(rawInput, ['find']);
       const input: Record<string, unknown> = {};
       if (filePath) input.file_path = filePath;
       if (pattern) input.pattern = pattern;
+      if (find) input.find = find;
       return { kind: 'tool', name, input };
     }
     case 'result': {
@@ -179,7 +193,7 @@ export const interpretGeminiEvent = (
         firstString(evt, ['response', 'result', 'text', 'content']) ??
         firstString(asRecord(evt.result), ['text', 'content', 'response']);
       const model = firstString(evt, ['model']);
-      const { input, output } = extractTokens(evt);
+      const { input, output, cached } = extractTokens(evt);
       const status = firstString(evt, ['status']);
       const error =
         firstString(evt, ['error']) ??
@@ -191,6 +205,7 @@ export const interpretGeminiEvent = (
         model,
         input,
         output,
+        cached,
         failed,
         error: failed ? (error ?? `gemini run ${status}`) : null,
       };
@@ -335,6 +350,7 @@ export const runSessionGemini = async (params: {
         if (it.model) usage.model = it.model;
         usage.inputTokens = it.input;
         usage.outputTokens = it.output;
+        usage.cacheReadTokens = it.cached;
         usage.costUsd = geminiCostUsd(it.input, it.output);
         if (it.failed) {
           failed = true;

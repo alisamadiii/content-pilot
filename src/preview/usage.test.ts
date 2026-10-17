@@ -53,3 +53,11 @@ test('resolveMessageCost per-message (gemini): stores as-is, accumulates total',
   assert.equal(r.messageCost, 0.004);
   assert.ok(Math.abs(r.newSessionTotal - 0.024) < 1e-9);
 });
+
+test('addUsage sums cacheReadTokens and keeps null when neither run reports it', () => {
+  const a = { ...usage(100, 5, null), cacheReadTokens: 80 };
+  const b = { ...usage(50, 5, null), cacheReadTokens: 40 };
+  assert.equal(addUsage(a, b).cacheReadTokens, 120);
+  assert.equal(addUsage(usage(1, 1, null), usage(1, 1, null)).cacheReadTokens, null);
+  assert.equal(addUsage(a, usage(1, 1, null)).cacheReadTokens, 80);
+});

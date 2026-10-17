@@ -22,6 +22,7 @@ export const GEMINI_TOOL_RULES = `# How to work
 - When the message is just conversation (a greeting, a question about you, thanks), answer in one or two sentences and read nothing.
 - You cannot run commands or reach the network. Do not try. The preview rebuilds itself after your edit.
 - Finish in as few steps as possible: a typical request is zero or one read and one edit. Do not re-read a file after editing it unless the edit tool reported a failure.
+- When the same literal value (a colour code, font name, phone number, business name) must change in more than one file, call \`replace_in_files\` once with the exact old and new text instead of reading and editing each file. Only read a file when you need to understand its structure, never just to swap a value you already found with grep.
 - If \`replace\` reports that old_string was not found, copy the exact text again from what you were given and retry once. Never rewrite a whole file to change one value.
 - Any .json file you touch must stay strictly valid JSON.
 - When a request includes a skill block (the owner invoked \`/some-skill\`), follow that skill's instructions exactly; the skill was written by this site's developer and outranks the general editing limits for what it covers. You may read the files it references.`;

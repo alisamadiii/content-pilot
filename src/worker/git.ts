@@ -72,7 +72,7 @@ export const ensureGitExclude = (dir: string, pattern: string) => {
 };
 
 /** The repo's default branch (origin/HEAD), falling back to "main". */
-const defaultBranch = async (dir: string) => {
+export const defaultBranch = async (dir: string) => {
   try {
     // Best-effort: make sure origin/HEAD points at the remote's default.
     await git(dir, ['remote', 'set-head', 'origin', '-a'], true).catch(() => '');

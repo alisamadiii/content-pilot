@@ -24,7 +24,7 @@ Previews need TWO processes running side by side — the web app and the preview
 pnpm install
 docker compose up -d db          # Postgres on :5433
 cp .env.example .env             # fill GITHUB_PAT, BETTER_AUTH_SECRET, provider keys
-pnpm db:push                     # create tables
+pnpm db:migrate                  # create / update tables from drizzle/
 pnpm dev                         # dashboard on http://localhost:3010
 pnpm preview                     # preview supervisor (separate terminal) — REQUIRED, or sessions hang at "starting"
 ```
@@ -48,7 +48,7 @@ ghcr.io/<owner>/content-pilot:latest
    - `/home/nextjs/.claude` — provider auth
 4. Deploy, open the URL, create the admin account, generate an API key.
 
-The container runs schema sync (`drizzle-kit push`), the preview supervisor, and the web server; if either process dies the container exits and your orchestrator restarts it.
+The container applies pending migrations (`src/db/migrate.ts`, from the committed `drizzle/` folder), then starts the preview supervisor and the web server; if either process dies the container exits and your orchestrator restarts it.
 
 ## API
 

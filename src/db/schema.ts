@@ -213,6 +213,8 @@ export const previewMessage = pgTable(
     model: text('model'),
     inputTokens: integer('input_tokens'),
     outputTokens: integer('output_tokens'),
+    // Cache reads inside input_tokens — the hub shows "N tokens · M cached".
+    cacheReadTokens: integer('cache_read_tokens'),
     costUsd: doublePrecision('cost_usd'),
     startedAt: timestamp('started_at'),
     finishedAt: timestamp('finished_at'),

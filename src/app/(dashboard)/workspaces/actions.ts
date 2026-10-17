@@ -13,6 +13,7 @@ import {
 } from '@/db/schema';
 import { auth } from '@/lib/auth';
 import { appDirKey, providerKey, setSetting } from '@/lib/settings';
+import { normalizeProvider, sanitizeAppDir } from '@/lib/settings-rules';
 import { config } from '@/worker/config';
 
 const requireSession = async () => {
@@ -74,10 +75,8 @@ export const setAppDir = async (repoId: number, value: string) => {
   if (!Number.isInteger(repoId) || repoId <= 0) {
     throw new Error('Invalid repo id.');
   }
-  const cleaned = value.trim().replace(/^\/+|\/+$/g, '');
-  if (cleaned.startsWith('/') || cleaned.split('/').includes('..')) {
-    throw new Error('App folder must be a path inside the repo.');
-  }
+  // Throws the client-facing message for traversal/absolute paths.
+  const cleaned = sanitizeAppDir(value) ?? '';
   await setSetting(appDirKey(repoId), cleaned);
   revalidatePath('/workspaces');
 };
@@ -95,6 +94,6 @@ export const setProvider = async (repoId: number, value: string) => {
   if (value !== 'claude' && value !== 'gemini') {
     throw new Error('Provider must be claude or gemini.');
   }
-  await setSetting(providerKey(repoId), value);
+  await setSetting(providerKey(repoId), normalizeProvider(value));
   revalidatePath('/workspaces');
 };

@@ -1,0 +1,1 @@
+ALTER TABLE "preview_message" ADD COLUMN "cache_read_tokens" integer;

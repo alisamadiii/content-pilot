@@ -67,6 +67,7 @@ export const GET = async (
       createdAt: previewMessage.createdAt,
       inputTokens: previewMessage.inputTokens,
       outputTokens: previewMessage.outputTokens,
+      cacheReadTokens: previewMessage.cacheReadTokens,
     })
     .from(previewMessage)
     .where(eq(previewMessage.sessionId, id))

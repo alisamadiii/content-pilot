@@ -90,3 +90,68 @@ test('buildSkillBlock wraps the body with the invocation and precedence note', (
   assert.match(block, /Never say "the site owner", "invoked", "skill"/);
   assert.doesNotMatch(buildSkillBlock({ ...skill, name: 'x' }, ''), /with:/);
 });
+
+// ---------------------------------------------------------------------------
+// Catalog (hub "/" menu)
+// ---------------------------------------------------------------------------
+
+import { listSkills, parseSkillFrontmatter, scanSkillsDir } from './skills';
+
+test('parseSkillFrontmatter reads name + description, stripping quotes', () => {
+  assert.deepEqual(
+    parseSkillFrontmatter('---\nname: add-page\ndescription: "Adds a page"\nextra: ignored\n---\n# Body'),
+    { name: 'add-page', description: 'Adds a page' }
+  );
+  assert.deepEqual(parseSkillFrontmatter("---\nname: 'x'\n---"), { name: 'x', description: '' });
+});
+
+test('parseSkillFrontmatter rejects files without frontmatter or without a name', () => {
+  assert.equal(parseSkillFrontmatter('# Just a heading\nname: nope'), null);
+  assert.equal(parseSkillFrontmatter('---\ndescription: only\n---'), null);
+  assert.equal(parseSkillFrontmatter(''), null);
+  // Frontmatter must open on the very first line.
+  assert.equal(parseSkillFrontmatter('\n---\nname: x\n---'), null);
+});
+
+test('scanSkillsDir lists valid skills only; missing dir and bad entries are skipped', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cp-skillcat-'));
+  await mkdir(join(dir, '.claude/skills/b-skill'), { recursive: true });
+  await mkdir(join(dir, '.claude/skills/a-skill'), { recursive: true });
+  await mkdir(join(dir, '.claude/skills/no-md'), { recursive: true });
+  await mkdir(join(dir, '.claude/skills/bad-md'), { recursive: true });
+  await writeFile(join(dir, '.claude/skills/b-skill/SKILL.md'), '---\nname: b-skill\ndescription: B\n---');
+  await writeFile(join(dir, '.claude/skills/a-skill/SKILL.md'), '---\nname: a-skill\ndescription: A\n---');
+  await writeFile(join(dir, '.claude/skills/bad-md/SKILL.md'), 'no frontmatter');
+  await writeFile(join(dir, '.claude/skills/stray-file'), 'x');
+  const found = await scanSkillsDir(dir);
+  assert.deepEqual(
+    found.sort((a, b) => a.name.localeCompare(b.name)),
+    [{ name: 'a-skill', description: 'A' }, { name: 'b-skill', description: 'B' }]
+  );
+  assert.deepEqual(await scanSkillsDir(join(dir, 'nope')), []);
+});
+
+test('listSkills merges app-folder and root skills, root winning, sorted by name', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cp-skilllist-'));
+  // App skills scan first, so insertion order is zeta/shared then alpha —
+  // the result must still come back sorted.
+  for (const [base, name, desc] of [
+    [join(dir, 'site'), 'zeta', 'app zeta'],
+    [join(dir, 'site'), 'shared', 'app shared'],
+    [dir, 'alpha', 'root alpha'],
+    [dir, 'shared', 'root shared'],
+  ]) {
+    await mkdir(join(base, '.claude/skills', name), { recursive: true });
+    await writeFile(join(base, '.claude/skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${desc}\n---`);
+  }
+  assert.deepEqual(await listSkills(dir, 'site'), [
+    { name: 'alpha', description: 'root alpha' },
+    { name: 'shared', description: 'root shared' },
+    { name: 'zeta', description: 'app zeta' },
+  ]);
+  // No app folder configured → root only.
+  assert.deepEqual(await listSkills(dir, null), [
+    { name: 'alpha', description: 'root alpha' },
+    { name: 'shared', description: 'root shared' },
+  ]);
+});

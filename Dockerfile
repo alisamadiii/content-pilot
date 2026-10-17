@@ -28,6 +28,8 @@ COPY --from=build --chown=nextjs:nodejs /app/src ./src
 # Preview-only AI analyzer folder, copied into each client clone at session start
 COPY --from=build --chown=nextjs:nodejs /app/ai-analyzer ./ai-analyzer
 COPY --from=build --chown=nextjs:nodejs /app/scripts ./scripts
+# Committed SQL migrations, applied by src/db/migrate.ts at container start
+COPY --from=build --chown=nextjs:nodejs /app/drizzle ./drizzle
 COPY --from=build --chown=nextjs:nodejs /app/drizzle.config.ts /app/tsconfig.json ./
 COPY --from=build --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --chown=nextjs:nodejs docker/entrypoint.sh ./docker/entrypoint.sh

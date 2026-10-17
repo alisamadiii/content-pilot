@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-echo "[entrypoint] syncing database schema..."
-node_modules/.bin/drizzle-kit push --force
+echo "[entrypoint] applying database migrations..."
+node_modules/.bin/tsx src/db/migrate.ts
 
 # The batch worker (AI edit jobs) is decommissioned — chat sessions via the
 # preview supervisor are the only AI path. src/worker/ stays on disk because

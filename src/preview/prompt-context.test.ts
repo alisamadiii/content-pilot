@@ -189,6 +189,7 @@ test('pagePathFromContext falls back to / when absent or unparseable', () => {
   assert.equal(pagePathFromContext(null), '/');
   assert.equal(pagePathFromContext('no page here'), '/');
   assert.equal(pagePathFromContext('editing this page: /team'), '/team');
+  assert.equal(pagePathFromContext('editing this page: team'), '/');
 });
 
 test('isStaleResumeError matches Claude and Gemini resume-failure phrasings', () => {

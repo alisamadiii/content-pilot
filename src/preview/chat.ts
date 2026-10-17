@@ -1,10 +1,15 @@
 import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
-import { readFile } from 'fs/promises';
-import { join } from 'path';
 import { db } from '@/db';
 import { previewMessage, previewSession } from '@/db/schema';
 import { findSessionForbiddenPaths } from '../worker/guardrails';
 import { aiUnavailableReason } from './ai-availability';
+import {
+  commitTitle,
+  countToolUses,
+  MAX_REPAIR_RUNS,
+  REJECTED_MESSAGE,
+  verifyChanges,
+} from './chat-checks';
 import {
   changedFiles,
   commitAndPush,
@@ -42,18 +47,6 @@ import {
   parseSourceRef,
 } from './prompt-context';
 
-/** Tool calls in a forwarded agent event (both providers use the hub shape). */
-const countToolUses = (event: unknown): number => {
-  const message = (event as { type?: string; message?: { content?: unknown } })
-    ?.message;
-  if ((event as { type?: string })?.type !== 'assistant') return 0;
-  const content = message?.content;
-  if (!Array.isArray(content)) return 0;
-  return content.filter(
-    (block) => (block as { type?: string })?.type === 'tool_use'
-  ).length;
-};
-
 type MessageRow = typeof previewMessage.$inferSelect;
 
 const log = (message: string) => {
@@ -75,12 +68,6 @@ export const cancelSession = (sessionId: string): boolean => {
   controller.abort();
   return true;
 };
-
-const REJECTED_MESSAGE =
-  'Thanks for your request! That change touched files the editor must not modify, so it was not applied. Please reach out to your developer and they will be happy to help.';
-
-/** Self-repair attempts when a change breaks the preview before giving up. */
-const MAX_REPAIR_RUNS = 2;
 
 /**
  * Replays the durable DB transcript into the prompt when the CLI-side
@@ -109,65 +96,6 @@ const buildRecap = async (
     .orderBy(desc(previewMessage.id))
     .limit(RECAP_MAX_MESSAGES);
   return renderRecap(rows.reverse());
-};
-
-const stripHtml = (html: string) =>
-  html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-/**
- * Post-edit verification: a change must not leave the preview broken. Returns a
- * problem description Claude can act on, or null when the change looks healthy.
- * Two checks: changed .json files must still parse (the CMS contract is JSON —
- * one stray comma 500s every page reading it), and the page the client is
- * viewing must still render on the dev server.
- */
-const verifyChanges = async (
-  dir: string,
-  port: number,
-  changed: string[],
-  pagePath: string
-): Promise<string | null> => {
-  for (const file of changed) {
-    if (!file.endsWith('.json')) continue;
-    try {
-      JSON.parse(await readFile(join(dir, file), 'utf8'));
-    } catch (error) {
-      return `${file} is no longer valid JSON: ${(error as Error).message}`;
-    }
-  }
-  const checkPage = async (path: string): Promise<string | null> => {
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}${path}`, {
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (res.status >= 500) {
-        const body = await res.text().catch(() => '');
-        return `GET ${path} now returns ${res.status}. Dev server error: ${stripHtml(body).slice(0, 600)}`;
-      }
-    } catch {
-      // Transient dev-server hiccup (restart, timeout) — don't block the
-      // commit on infrastructure noise; only concrete errors trigger a repair.
-    }
-    return null;
-  };
-  const problem = await checkPage(pagePath);
-  if (problem) return problem;
-  // Site-wide CMS files feed every page — a break there can miss the page the
-  // client is viewing, so also probe the home page. Other routes stay
-  // unchecked (known limitation; a full crawl per edit is too slow).
-  const touchedSharedCms = changed.some(
-    (file) =>
-      /(^|\/)(_site|_pages)\.json$/.test(file) || /(^|\/)_collections\//.test(file)
-  );
-  if (touchedSharedCms && pagePath !== '/') {
-    return checkPage('/');
-  }
-  return null;
 };
 
 const finishMessage = async (
@@ -578,11 +506,10 @@ const processMessage = async (row: MessageRow) => {
 
     let sha: string | null = null;
     if (changed.length) {
-      const title = row.content.split('\n')[0].slice(0, 72);
       sha = await commitAndPush({
         dir: session.dir,
         branch: sessionRow.branch,
-        message: `AI session edit: ${title}`,
+        message: `AI session edit: ${commitTitle(row.content)}`,
       });
       await emitEvent(row.sessionId, 'commit', { sha, files: changed }, row.id);
     }

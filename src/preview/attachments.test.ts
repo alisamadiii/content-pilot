@@ -31,6 +31,10 @@ test('chooseImageDir falls back to images/uploads and never picks src/ or bare i
   assert.equal(chooseImageDir('a nice sunset', hints, 'public'), 'public/images/uploads');
   assert.equal(chooseImageDir('icons for the nav', hints, 'public'), 'public/images/uploads');
   assert.equal(chooseImageDir('anything', [], 'site/public'), 'site/public/images/uploads');
+  // Naming the generic folder itself ("assets", "images") never selects it.
+  const generic = [{ dir: 'public/assets', count: 9 }, { dir: 'public/images', count: 9 }, { dir: 'public/img', count: 9 }];
+  assert.equal(chooseImageDir('assets for the hero', generic, 'public'), 'public/images/uploads');
+  assert.equal(chooseImageDir('more images please', generic, 'public'), 'public/images/uploads');
 });
 
 test('chooseImageDir respects the app subfolder prefix', () => {

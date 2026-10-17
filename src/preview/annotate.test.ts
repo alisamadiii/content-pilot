@@ -76,17 +76,17 @@ test('rs: components, member components and Fragment are left alone', () => {
 });
 
 test('rs: structural/skip tags are untouched', () => {
-  const src = '<html><head><title>t</title></head><body><slot /><div>x</div></body></html>';
+  const src = '<html><head><title>t</title><script>s</script></head><body><slot /><div>x</div></body></html>';
   const ast = root(
     el(src, 'html', [
-      el(src, 'head', [el(src, 'title')]),
+      el(src, 'head', [el(src, 'title'), el(src, 'script')]),
       el(src, 'body', [el(src, 'slot'), el(src, 'div')]),
     ])
   );
   const out = annotateWithRsAst(src, ast, opts);
   assert.equal(
     out,
-    '<html><head><title>t</title></head><body><slot /><div data-cms-src="src/x.astro:1">x</div></body></html>'
+    '<html><head><title>t</title><script>s</script></head><body><slot /><div data-cms-src="src/x.astro:1">x</div></body></html>'
   );
 });
 

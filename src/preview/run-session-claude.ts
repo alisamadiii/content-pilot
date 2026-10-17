@@ -1,18 +1,45 @@
 import {
   query,
   AbortError,
+  createSdkMcpServer,
+  tool,
   type HookCallback,
   type PreToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
 import { SESSION_PROMPT } from '../worker/guardrails';
 import type { ClaudeUsage } from './usage';
 import { previewConfig } from './config';
+import { describeReplace, REPLACE_TOOL_DESCRIPTION, replaceInFiles } from './replace-in-files';
+import { replaceToolInput } from './replace-mcp-server';
+
+/** Tool names as the SDK exposes them (`mcp__<server>__<tool>`). */
+export const REPLACE_TOOL_NAME = 'mcp__pilot__replace_in_files';
+
+/**
+ * In-process MCP server with the one custom tool an edit session needs:
+ * bulk literal replace, so a brand-value swap is one call instead of a
+ * Read+Edit per file. Bound to the session clone.
+ */
+export const pilotTools = (cwd: string) =>
+  createSdkMcpServer({
+    name: 'pilot',
+    version: '1.0.0',
+    tools: [
+      tool('replace_in_files', REPLACE_TOOL_DESCRIPTION, replaceToolInput, async ({ find, replace, include }) => {
+        const result = replaceInFiles({ dir: cwd, find, replace, include });
+        return {
+          content: [{ type: 'text', text: describeReplace(result) }],
+          isError: !result.ok,
+        };
+      }),
+    ],
+  });
 
 // Chat uploads are described to the agent, never shown (token cost); the
 // bytes also live outside cwd. This hook is the in-process backstop for any
 // other image in the repo: Read returns images as vision content, so deny it.
-const IMAGE_PATH = /\.(webp|jpe?g|png|gif|avif)$/i;
-const denyImageReads: HookCallback = async (input) => {
+export const IMAGE_PATH = /\.(webp|jpe?g|png|gif|avif)$/i;
+export const denyImageReads: HookCallback = async (input) => {
   const pre = input as PreToolUseHookInput;
   const path = String(
     (pre.tool_input as { file_path?: unknown } | undefined)?.file_path ?? ''
@@ -73,6 +100,7 @@ export const runSessionClaude = async (params: {
     model: null,
     inputTokens: null,
     outputTokens: null,
+    cacheReadTokens: null,
     costUsd: null,
   };
 
@@ -94,7 +122,8 @@ export const runSessionClaude = async (params: {
       cwd: params.cwd,
       model: previewConfig.claudeModel,
       systemPrompt: { type: 'preset', preset: 'claude_code', append: SESSION_PROMPT },
-      allowedTools: ['Read', 'Edit', 'Write', 'Glob', 'Grep'],
+      allowedTools: ['Read', 'Edit', 'Write', 'Glob', 'Grep', REPLACE_TOOL_NAME],
+      mcpServers: { pilot: pilotTools(params.cwd) },
       // Hard backstop: acceptEdits only auto-approves edits; anything that
       // could reach outside the working tree is removed from context entirely.
       disallowedTools: ['Bash', 'WebFetch', 'WebSearch', 'Task'],
@@ -135,6 +164,9 @@ export const runSessionClaude = async (params: {
           const cacheCreate = eventUsage.cache_creation_input_tokens ?? 0;
           usage.inputTokens =
             (eventUsage.input_tokens ?? 0) + cacheRead + cacheCreate;
+          // Shown separately in the hub: most of a resumed run's input is
+          // cache reads, which cost ~10% of fresh tokens.
+          usage.cacheReadTokens = cacheRead;
           usage.outputTokens = eventUsage.output_tokens ?? null;
         }
         if (typeof event.total_cost_usd === 'number') {

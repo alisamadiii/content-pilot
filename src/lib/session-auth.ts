@@ -1,9 +1,21 @@
-import { randomBytes } from 'crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '@/db';
 import { previewSession } from '@/db/schema';
 import { verifyApiKey } from './api-key';
 import { verifyEditToken, type EditTokenPayload } from './edit-token';
+import {
+  extractCredentials,
+  SESSION_ENDED_MESSAGE,
+  sessionCorsHeaders,
+  TERMINAL_SESSION_STATUSES,
+} from './request-credentials';
+
+export {
+  newSessionId,
+  SESSION_ENDED_MESSAGE,
+  sessionCorsHeaders,
+  TERMINAL_SESSION_STATUSES,
+} from './request-credentials';
 
 /**
  * Shared auth for the /api/v1/sessions* routes. Two accepted credentials,
@@ -21,33 +33,16 @@ export type SessionAuth =
 export const authenticateSessionRequest = async (
   request: Request
 ): Promise<SessionAuth | null> => {
-  const headerKey = request.headers.get('x-api-key');
-  const bearerMatch = (request.headers.get('authorization') || '').match(
-    /^Bearer\s+(.+)$/i
-  );
-  const bearer = bearerMatch ? bearerMatch[1].trim() : null;
-  const queryToken = new URL(request.url).searchParams.get('token');
+  const { apiKeyCandidate, editTokenCandidate } = extractCredentials(request);
 
-  const key = await verifyApiKey(headerKey ?? bearer);
+  const key = await verifyApiKey(apiKeyCandidate);
   if (key) return { kind: 'api-key' };
 
-  const edit = verifyEditToken(bearer ?? queryToken);
+  const edit = verifyEditToken(editTokenCandidate);
   if (edit) return { kind: 'edit-token', payload: edit };
 
   return null;
 };
-
-/** Session states that no longer accept chat input (messages, uploads). */
-export const TERMINAL_SESSION_STATUSES = [
-  'needs_config',
-  'failed',
-  'closed',
-  'published',
-  'expired',
-] as const;
-
-export const SESSION_ENDED_MESSAGE =
-  'This editing session has ended. Please reopen the project to start a new one.';
 
 type SessionRow = typeof previewSession.$inferSelect;
 
@@ -99,25 +94,4 @@ export const loadSessionForEdit = async (
     };
   }
   return { session, auth, headers };
-};
-
-export const sessionCorsHeaders = (origin: string | null) => ({
-  // Token is the security boundary, not the origin — same model as intake.
-  'Access-Control-Allow-Origin': origin || '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Api-Key',
-  'Access-Control-Max-Age': '86400',
-  Vary: 'Origin',
-});
-
-// Lowercase alphanumeric so the id is a valid DNS label (preview subdomain)
-// and branch suffix.
-export const newSessionId = () => {
-  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  const bytes = randomBytes(12);
-  let id = '';
-  for (const byte of bytes) {
-    id += alphabet[byte % alphabet.length];
-  }
-  return id;
 };

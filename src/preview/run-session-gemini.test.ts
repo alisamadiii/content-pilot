@@ -102,6 +102,7 @@ test('successful result reads tokens from stats and is not failed', () => {
     model: null,
     input: 25059,
     output: 23,
+    cached: 0,
     failed: false, // status:success => not failed
     error: null,
   });
@@ -149,9 +150,9 @@ test('unrecognized / tool_result events are ignored', () => {
 test('extractTokens finds counts nested under stats', () => {
   assert.deepEqual(
     extractTokens({ stats: { input_tokens: 100, output_tokens: 5 } }),
-    { input: 100, output: 5 }
+    { input: 100, output: 5, cached: null }
   );
-  assert.deepEqual(extractTokens({}), { input: null, output: null });
+  assert.deepEqual(extractTokens({}), { input: null, output: null, cached: null });
 });
 
 test('geminiCostUsd computes from tokens, null when both absent', () => {
@@ -171,5 +172,32 @@ test('hub mappers emit the exact shapes the reducer folds', () => {
     message: {
       content: [{ type: 'tool_use', name: 'Edit', input: { file_path: 'a.astro' } }],
     },
+  });
+});
+
+// ------------------------------------------------- replace_in_files + cache
+
+test('interpretGeminiEvent maps the replace_in_files MCP tool and keeps `find`', () => {
+  const it = interpretGeminiEvent({
+    type: 'tool_use',
+    name: 'replace_in_files',
+    args: { find: '#1554A8', replace: '#5B21B6', include: ['src'] },
+  });
+  assert.deepEqual(it, {
+    kind: 'tool',
+    name: 'mcp__pilot__replace_in_files',
+    input: { find: '#1554A8' },
+  });
+});
+
+test('extractTokens reads cached token counts when the CLI reports them', () => {
+  assert.deepEqual(
+    extractTokens({ stats: { input_tokens: 100, output_tokens: 5, cached_content_token_count: 60 } }),
+    { input: 100, output: 5, cached: 60 }
+  );
+  assert.deepEqual(extractTokens({ stats: { input_tokens: 1, output_tokens: 2 } }), {
+    input: 1,
+    output: 2,
+    cached: null,
   });
 });

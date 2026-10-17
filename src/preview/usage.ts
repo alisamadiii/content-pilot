@@ -4,6 +4,8 @@ export type ClaudeUsage = {
   model: string | null;
   inputTokens: number | null;
   outputTokens: number | null;
+  /** Part of inputTokens served from the prompt cache (Claude; Gemini when reported). */
+  cacheReadTokens?: number | null;
   costUsd: number | null;
 };
 
@@ -28,6 +30,10 @@ export const addUsage = (
     a.outputTokens === null && b.outputTokens === null
       ? null
       : (a.outputTokens ?? 0) + (b.outputTokens ?? 0),
+  cacheReadTokens:
+    (a.cacheReadTokens ?? null) === null && (b.cacheReadTokens ?? null) === null
+      ? null
+      : (a.cacheReadTokens ?? 0) + (b.cacheReadTokens ?? 0),
   costUsd: sumCost
     ? a.costUsd === null && b.costUsd === null
       ? null
