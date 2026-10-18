@@ -99,3 +99,11 @@ test('session prompt forbids claiming a change that was not made (2026-10-18)', 
   assert.match(SESSION_PROMPT, /Only say you changed something when your edit actually succeeded/);
   assert.match(SESSION_PROMPT, /already exists, say it is already there/);
 });
+
+test('session prompt forbids guessing between several matching elements (2026-10-18)', async () => {
+  const { SESSION_PROMPT } = await import('./guardrails');
+  assert.match(SESSION_PROMPT, /Never guess the target/);
+  assert.match(SESSION_PROMPT, /lists the candidates by their current text/);
+  assert.match(SESSION_PROMPT, /Never change several elements to satisfy a singular request/);
+  assert.match(SESSION_PROMPT, /not a request to edit that page/);
+});

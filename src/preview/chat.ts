@@ -31,6 +31,7 @@ import { RECAP_MAX_MESSAGES, renderRecap, sanitizeForClient } from './recap';
 import { buildRepoContext } from './repo-context';
 import { looksLikeUndo, UNDO_REPLY } from './undo-guard';
 import { claimsChange, HONESTY_REPAIR_PROMPT } from './honesty';
+import { findAmbiguity } from './ambiguity';
 import { runSessionClaude } from './run-session-claude';
 import { runSessionGemini } from './run-session-gemini';
 import { liveSession } from './sessions';
@@ -44,7 +45,7 @@ import {
 } from './skills';
 import { addUsage, resolveMessageCost } from './usage';
 import {
-  buildPinnedFile,
+  collectPinned,
   isStaleResumeError,
   pagePathFromContext,
   parseSourceRef,
@@ -291,14 +292,26 @@ const processMessage = async (row: MessageRow) => {
     // (named in the message or being viewed) plus its content components, so
     // the AI skips the reads. A skill names its own files, so only a clicked
     // element is pinned alongside it.
-    const pinnedFile =
+    const pinned =
       skillBlock && !parseSourceRef(row.context)
-        ? ''
-        : await buildPinnedFile(row.context, session.dir, session.appDir, {
+        ? null
+        : await collectPinned(row.context, session.dir, session.appDir, {
             message: row.content,
             routes: repo.routes,
             hasAttachments: attachments.length > 0,
           });
+    const pinnedFile = pinned?.text ?? '';
+    // "Change the button text" with several buttons on the page: ask which,
+    // never guess (see ./ambiguity). Clicked elements, uploads and skills
+    // carry their own target and skip this.
+    if (pinned && !pinned.picked && !skillBlock && !attachments.length) {
+      const question = findAmbiguity(row.content, pinned.files);
+      if (question) {
+        await finishMessage(row, { status: 'done' }, question);
+        log(`session ${row.sessionId}: message #${row.id} ambiguous target — asked instead of guessing`);
+        return;
+      }
+    }
     // Images the owner attached: the server picks a destination, copies the
     // bytes into the clone now and tells the agent the URL; the agent only
     // adds the reference (see ./attachments).

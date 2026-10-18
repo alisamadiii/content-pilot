@@ -84,6 +84,19 @@ const fence = (path: string, content: string) =>
  * Skips files too large to inline (the AI reads those the normal way). Returns
  * '' when nothing can be pinned.
  */
+export type PinnedContext = {
+  /** The prompt block ('' when nothing is pinned). */
+  text: string;
+  /** The pinned files (clicked file, or page + imported components). */
+  files: Array<{ path: string; content: string }>;
+  /** True when the owner clicked an element (pick-mode) — unambiguous target. */
+  picked: boolean;
+  /** The page route the pin is about (null for a clicked file / no pin). */
+  route: string | null;
+};
+
+const NOTHING: PinnedContext = { text: '', files: [], picked: false, route: null };
+
 export const buildPinnedFile = async (
   context: string | null,
   dir: string,
@@ -93,14 +106,26 @@ export const buildPinnedFile = async (
     routes?: Map<string, string>;
     hasAttachments?: boolean;
   } = {}
-): Promise<string> => {
+): Promise<string> => (await collectPinned(context, dir, appDir, options)).text;
+
+/** buildPinnedFile plus the underlying files, for pre-run checks (ambiguity). */
+export const collectPinned = async (
+  context: string | null,
+  dir: string,
+  appDir: string,
+  options: {
+    message?: string;
+    routes?: Map<string, string>;
+    hasAttachments?: boolean;
+  } = {}
+): Promise<PinnedContext> => {
   const ref = parseSourceRef(context);
   if (ref) {
     for (const file of [join(appDir, ref.path), join(dir, ref.path)]) {
       try {
         const content = await readFile(file, 'utf8');
-        if (content.length > MAX_PINNED_FILE_BYTES) return '';
-        return (
+        if (content.length > MAX_PINNED_FILE_BYTES) return NOTHING;
+        const text =
           `The client clicked an element in \`${ref.path}\`` +
           (ref.line ? ` (their element is at line ${ref.line})` : '') +
           `. The full current content of that file is below — you already have ` +
@@ -108,28 +133,28 @@ export const buildPinnedFile = async (
           `do not search the repo, do not run commands.\n\n` +
           '```\n' +
           content +
-          '\n```'
-        );
+          '\n```';
+        return { text, files: [{ path: ref.path, content }], picked: true, route: null };
       } catch {
         // try the next candidate path
       }
     }
-    return '';
+    return NOTHING;
   }
 
   const routes = options.routes;
-  if (!routes?.size) return '';
+  if (!routes?.size) return NOTHING;
   const message = options.message ?? '';
   const current = pagePathFromContext(context);
   const mentioned = routeMentionedIn(message, routes, current);
   // Chat ("hi", "did you read it?") gets no pin; naming a page or sounding
   // like an edit does.
-  if (!mentioned && !looksLikeEdit(message, options.hasAttachments)) return '';
+  if (!mentioned && !looksLikeEdit(message, options.hasAttachments)) return NOTHING;
   const route = mentioned ?? current;
   const pageFile = resolvePageFile(routes, route);
-  if (!pageFile) return '';
+  if (!pageFile) return NOTHING;
   const bundle = await collectPageBundle(dir, appDir, pageFile, MAX_PINNED_FILE_BYTES);
-  if (!bundle) return '';
+  if (!bundle) return NOTHING;
   const who = mentioned ? 'The request is about' : 'The client is viewing';
   const parts = [
     `${who} the page \`${route}\`, rendered by \`${pageFile}\`. The full current content of that file` +
@@ -141,7 +166,7 @@ export const buildPinnedFile = async (
         : ' If the content you need is not below, read only the one extra file you need.'),
     ...bundle.files.map((f) => fence(f.path, f.content)),
   ];
-  return parts.join('\n\n');
+  return { text: parts.join('\n\n'), files: bundle.files, picked: false, route };
 };
 
 /**

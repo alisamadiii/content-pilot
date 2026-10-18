@@ -157,3 +157,29 @@ test('collectPageBundle respects the byte budget and reports omissions', async (
   assert.equal(await collectPageBundle(dir, dir, 'src/pages/about.astro', 10), null);
   assert.equal(await collectPageBundle(dir, dir, 'src/pages/nope.astro', 1000), null);
 });
+
+// ------------------------------------------------- value-position mentions (2026-10-18)
+
+test('routeMentionedIn: a route name used as the NEW VALUE is not a page mention', () => {
+  const routes = new Map([
+    ['/', 'src/pages/index.astro'],
+    ['/get-involved', 'src/pages/get-involved.astro'],
+    ['/about', 'src/pages/about.astro'],
+  ]);
+  // EmpowerHer: owner on the home page, new button text equals a route name.
+  assert.equal(routeMentionedIn('Change the button text to Get Involved', routes, '/'), null);
+  assert.equal(routeMentionedIn('make the heading say get involved today', routes, '/'), null);
+  assert.equal(routeMentionedIn('rename it to "Get Involved"', routes, '/'), null);
+  assert.equal(routeMentionedIn("the button should read: get-involved", routes, '/'), null);
+});
+
+test('routeMentionedIn: a real page mention still wins, including "to the X page"', () => {
+  const routes = new Map([
+    ['/', 'src/pages/index.astro'],
+    ['/get-involved', 'src/pages/get-involved.astro'],
+    ['/about', 'src/pages/about.astro'],
+  ]);
+  assert.equal(routeMentionedIn('on the get involved page change the button text', routes, '/'), '/get-involved');
+  assert.equal(routeMentionedIn('move this section to the about page', routes, '/'), '/about');
+  assert.equal(routeMentionedIn('get involved: change the first button', routes, '/'), '/get-involved');
+});

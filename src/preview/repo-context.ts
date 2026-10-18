@@ -212,7 +212,8 @@ export const routeMentionedIn = (
   routes: Map<string, string>,
   currentPath: string
 ): string | null => {
-  const text = message.toLowerCase();
+  // Quoted spans are values ("change it to 'Get Involved'"), never page names.
+  const text = message.toLowerCase().replace(QUOTED_SPAN, ' ');
   if (currentPath !== '/' && routes.has('/') && HOME_WORDS.test(text)) return '/';
   let best: { route: string; length: number } | null = null;
   for (const route of routes.keys()) {
@@ -220,14 +221,26 @@ export const routeMentionedIn = (
     const segment = route.split('/').pop() ?? '';
     if (segment.length < 3) continue;
     const word = segment.replace(/[-_]/g, '[-_ ]?');
-    if (new RegExp(`\\b${word}\\b`, 'i').test(text)) {
-      if (!best || segment.length > best.length) {
-        best = { route, length: segment.length };
-      }
+    const match = new RegExp(`\\b${word}\\b`, 'i').exec(text);
+    if (!match) continue;
+    // "change the button text to get involved": the route name sits in VALUE
+    // position (after to/say/read/…) and is not followed by "page" — that is
+    // new content, not a page the request is about (EmpowerHer 2026-10-18:
+    // this pinned /get-involved while the owner was on the home page).
+    const before = text.slice(0, match.index);
+    const after = text.slice(match.index + match[0].length);
+    if (VALUE_LEAD_IN.test(before) && !/^\s+page\b/.test(after)) continue;
+    if (!best || segment.length > best.length) {
+      best = { route, length: segment.length };
     }
   }
   return best?.route ?? null;
 };
+
+const QUOTED_SPAN = /["“”'‘’][^"“”'‘’]{2,}["“”'‘’]/g;
+/** Words that introduce a value: `… to X`, `… say X`, `… reads: X`. */
+const VALUE_LEAD_IN =
+  /\b(?:to|into|say|says|saying|read|reads|reading|as|called|named|titled|with|be|become|becomes)\s*(?:the\s+|a\s+|an\s+)?[:"“'‘]?\s*$/i;
 
 const listComponents = async (dir: string, appDir: string) => {
   const appRel = toPosix(relative(dir, appDir));
