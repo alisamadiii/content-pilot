@@ -155,3 +155,30 @@ test('listSkills merges app-folder and root skills, root winning, sorted by name
     { name: 'shared', description: 'root shared' },
   ]);
 });
+
+// ------------------------------------------------- skill carry-over (2026-10-18)
+
+test('carrySkillFromPrevious: details after a bare /skill inherit that skill', async () => {
+  const { carrySkillFromPrevious } = await import('./skills');
+  assert.deepEqual(
+    carrySkillFromPrevious('/manage-resources', 'New\n\ntitle: Maria Rosario Lazzati Niada Scholarship'),
+    { name: 'manage-resources', rest: 'New\n\ntitle: Maria Rosario Lazzati Niada Scholarship' }
+  );
+  assert.deepEqual(carrySkillFromPrevious('  /Manage-Team  ', 'add Sara F'), {
+    name: 'manage-team',
+    rest: 'add Sara F',
+  });
+});
+
+test('carrySkillFromPrevious: a previous invocation WITH details does not re-arm', async () => {
+  const { carrySkillFromPrevious } = await import('./skills');
+  assert.equal(carrySkillFromPrevious('/manage-team add Sara F', 'thanks, now the hero'), null);
+});
+
+test('carrySkillFromPrevious: an explicit new /skill, a plain previous message, or empty input → null', async () => {
+  const { carrySkillFromPrevious } = await import('./skills');
+  assert.equal(carrySkillFromPrevious('/manage-team', '/manage-partners reorder'), null);
+  assert.equal(carrySkillFromPrevious('change the heading', 'and the subheading'), null);
+  assert.equal(carrySkillFromPrevious(null, 'hello'), null);
+  assert.equal(carrySkillFromPrevious('/manage-team', '   '), null);
+});

@@ -93,3 +93,9 @@ test('session prompt carries the two forbidden actions and the no-image-read rul
   assert.match(SESSION_PROMPT, /Never open, read, or view image files/);
   assert.match(SESSION_PROMPT, /strictly valid JSON/);
 });
+
+test('session prompt forbids claiming a change that was not made (2026-10-18)', async () => {
+  const { SESSION_PROMPT } = await import('../worker/guardrails');
+  assert.match(SESSION_PROMPT, /Only say you changed something when your edit actually succeeded/);
+  assert.match(SESSION_PROMPT, /already exists, say it is already there/);
+});

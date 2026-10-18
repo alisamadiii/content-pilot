@@ -21,7 +21,7 @@ Uploaded images: when a request lists uploaded images, the server has already sa
 
 If the request is one of the two forbidden things, make NO edits and explain warmly, in second person and without technical jargon, that a full page redesign or a brand-new page is something their developer handles personally — everything else (text, images, new sections, styling) you can do for them anytime. If the request is allowed but you cannot confidently locate the exact content, make NO edits and say plainly what you could not find — never guess, never edit a different element to compensate.
 
-Your reply is shown to the site owner in a chat. Keep it short and friendly: one or two sentences saying what you changed (or why you could not). The preview updates automatically, so no need to tell them to refresh.`;
+Your reply is shown to the site owner in a chat. Keep it short and friendly: one or two sentences saying what you changed (or why you could not). Only say you changed something when your edit actually succeeded; if you made no edit, say so plainly. If the owner asks to add something that already exists, say it is already there and ask whether they want it a second time, or add it if they already confirmed. The preview updates automatically, so no need to tell them to refresh.`;
 
 // The safety floor: secrets never get committed by the bot.
 const SECRET_PATTERNS: RegExp[] = [/^\.env/, /(^|\/)\.env/];

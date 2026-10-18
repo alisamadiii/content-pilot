@@ -65,6 +65,27 @@ export const buildSkillBlock = (skill: LoadedSkill, rest: string) =>
     `--- end of skill ---`,
   ].join('\n');
 
+/**
+ * The details message after a bare `/name` (the model asked "what would you
+ * like to do?" and this is the answer) belongs to that skill. Gemini runs
+ * every message as a fresh conversation, so without this the follow-up runs
+ * with no skill text at all (EmpowerHer 2026-10-18: `/manage-resources` →
+ * question → details → two reads, no edit). Only a BARE previous invocation
+ * carries over; a completed `/name details` turn does not re-arm the skill.
+ */
+export const carrySkillFromPrevious = (
+  previousUserContent: string | null | undefined,
+  content: string
+): SkillInvocation | null => {
+  if (!previousUserContent) return null;
+  if (parseSkillInvocation(content)) return null;
+  const previous = parseSkillInvocation(previousUserContent);
+  if (!previous || previous.rest) return null;
+  const rest = content.trim();
+  if (!rest) return null;
+  return { name: previous.name, rest };
+};
+
 /** The user-turn text for a bare `/name` with nothing after it. */
 export const bareSkillRequest = (name: string) =>
   `(They clicked /${name} without adding any details. Do not read or change any file yet: first ask them, in one short warm question, what they would like to do — which item, what text, which page — and stop there. Only skip the question if the skill can be completed with no input at all.)`;

@@ -30,10 +30,12 @@ import { writeGeminiSystemPrompt } from './gemini-system-prompt';
 import { RECAP_MAX_MESSAGES, renderRecap, sanitizeForClient } from './recap';
 import { buildRepoContext } from './repo-context';
 import { looksLikeUndo, UNDO_REPLY } from './undo-guard';
+import { claimsChange, HONESTY_REPAIR_PROMPT } from './honesty';
 import { runSessionClaude } from './run-session-claude';
 import { runSessionGemini } from './run-session-gemini';
 import { liveSession } from './sessions';
 import {
+  carrySkillFromPrevious,
   bareSkillRequest,
   buildSkillBlock,
   loadSkill,
@@ -97,6 +99,27 @@ const buildRecap = async (
     .orderBy(desc(previewMessage.id))
     .limit(RECAP_MAX_MESSAGES);
   return renderRecap(rows.reverse());
+};
+
+/** The owner's previous finished message (for skill carry-over). */
+const previousUserContent = async (
+  sessionId: string,
+  beforeMessageId: number
+): Promise<string | null> => {
+  const [row] = await db
+    .select({ content: previewMessage.content })
+    .from(previewMessage)
+    .where(
+      and(
+        eq(previewMessage.sessionId, sessionId),
+        eq(previewMessage.role, 'user'),
+        lt(previewMessage.id, beforeMessageId),
+        eq(previewMessage.status, 'done')
+      )
+    )
+    .orderBy(desc(previewMessage.id))
+    .limit(1);
+  return row?.content ?? null;
 };
 
 const finishMessage = async (
@@ -245,7 +268,15 @@ const processMessage = async (row: MessageRow) => {
     let request = row.content;
     // Parsed for both providers (the reply scrub keys on it); only Gemini
     // gets the body inlined.
-    const invocation = parseSkillInvocation(row.content);
+    // A bare "/skill" turn asks a question; the owner's next message is the
+    // answer and runs under that same skill (Gemini has no conversation
+    // memory between messages, so the skill text must be inlined again).
+    const invocation =
+      parseSkillInvocation(row.content) ??
+      carrySkillFromPrevious(
+        await previousUserContent(row.sessionId, row.id),
+        row.content
+      );
     if (invocation && provider === 'gemini') {
       const skill = await loadSkill(session.dir, session.appDir, invocation.name);
       if (skill) {
@@ -402,6 +433,47 @@ const processMessage = async (row: MessageRow) => {
     }
 
     let changed = await changedFiles(session.dir);
+    // Reply claims a change, tree says otherwise → one forced repair run:
+    // make the edit or answer honestly. Never ship "I've re-added it" over an
+    // untouched file (see ./honesty).
+    if (!changed.length && claimsChange(resultText)) {
+      log(
+        `session ${row.sessionId}: message #${row.id} claimed a change with no file modified — honesty repair`
+      );
+      const honestPrompt = `${HONESTY_REPAIR_PROMPT}\n\nThe owner's request was: "${request}"`;
+      const honest = await runAgent({
+        cwd: session.dir,
+        prompt:
+          provider === 'gemini' && preamble
+            ? `${preamble}\n\n---\n\n${honestPrompt}`
+            : honestPrompt,
+        claudeSessionId,
+        signal: cancelController.signal,
+        systemPromptPath,
+        onEvent,
+      });
+      usage = addUsage(usage, honest.usage, !costIsCumulative);
+      if (honest.gotResult && honest.claudeSessionId) {
+        claudeSessionId = honest.claudeSessionId;
+      }
+      if (cancelController.signal.aborted) {
+        await discardChanges(session.dir);
+        await finishMessage(
+          row,
+          {
+            status: 'failed',
+            error:
+              "You paused this request, so nothing was applied. Send a new request whenever you're ready.",
+          },
+          null
+        );
+        return;
+      }
+      if (!honest.timedOut && honest.exitCode === 0 && honest.resultText) {
+        resultText = honest.resultText;
+      }
+      changed = await changedFiles(session.dir);
+    }
     const rejectForbidden = async (forbidden: string[]) => {
       log(`session ${row.sessionId}: denylist hit — ${forbidden.join(', ')}`);
       await persistClaudeSessionId();
