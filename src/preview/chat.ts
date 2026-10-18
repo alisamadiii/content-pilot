@@ -29,6 +29,7 @@ import { emitEvent, emitEvents } from './events';
 import { writeGeminiSystemPrompt } from './gemini-system-prompt';
 import { RECAP_MAX_MESSAGES, renderRecap, sanitizeForClient } from './recap';
 import { buildRepoContext } from './repo-context';
+import { looksLikeUndo, UNDO_REPLY } from './undo-guard';
 import { runSessionClaude } from './run-session-claude';
 import { runSessionGemini } from './run-session-gemini';
 import { liveSession } from './sessions';
@@ -186,6 +187,15 @@ const processMessage = async (row: MessageRow) => {
       { status: 'failed', error: `${aiDown} The preview itself still works — contact your developer to enable AI editing.` },
       null
     );
+    return;
+  }
+
+  // Undo / revert is manual (header Changes dialog → Revert per file): the
+  // AI never reconstructs old content from memory. Fixed reply, no agent run,
+  // no tokens. Skill invocations are exempt — the skill defines their scope.
+  if (!parseSkillInvocation(row.content) && looksLikeUndo(row.content)) {
+    await finishMessage(row, { status: 'done' }, UNDO_REPLY);
+    log(`session ${row.sessionId}: message #${row.id} answered by the undo guard`);
     return;
   }
 

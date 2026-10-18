@@ -1,5 +1,9 @@
+import { execFile } from 'child_process';
 import { isAbsolute, relative, resolve } from 'path';
+import { promisify } from 'util';
 import { git } from '../worker/git';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Helpers behind the per-file diff + session changes routes. The hub shows
@@ -8,11 +12,59 @@ import { git } from '../worker/git';
  * sessions read the same way.
  */
 
-/** Images are never diffed (binary; also never shown to the agent). */
+/** Images are never text-diffed (binary; also never shown to the agent). */
 export const IMAGE_PATH = /\.(webp|jpe?g|png|gif|avif|ico|svg)$/i;
 
 /** 200 KB per side — plenty for source files, keeps the hub dialog snappy. */
 export const MAX_DIFF_BYTES = 200_000;
+
+/** 3 MB per side for image previews (inlined as data URLs). */
+export const MAX_IMAGE_DIFF_BYTES = 3 * 1024 * 1024;
+
+const IMAGE_MIME: Record<string, string> = {
+  webp: 'image/webp',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  avif: 'image/avif',
+  ico: 'image/x-icon',
+  svg: 'image/svg+xml',
+};
+
+/** MIME for an image path by extension; null for non-images. */
+export const imageMime = (path: string): string | null => {
+  const ext = path.toLowerCase().split('.').pop() ?? '';
+  return IMAGE_MIME[ext] ?? null;
+};
+
+export type ImageAtRev = { dataUrl: string } | { tooLarge: true };
+
+/**
+ * `git show <rev>:<path>` as a data URL for the hub's image before/after
+ * (chat uploads land as new .webp files; the Changes dialog shows them side
+ * by side instead of "could not load"). Null when the file does not exist at
+ * that rev; `tooLarge` above MAX_IMAGE_DIFF_BYTES.
+ */
+export const showImageAt = async (
+  dir: string,
+  rev: string,
+  path: string
+): Promise<ImageAtRev | null> => {
+  const mime = imageMime(path);
+  if (!mime) return null;
+  try {
+    const { stdout } = await execFileAsync('git', ['show', `${rev}:${path}`], {
+      cwd: dir,
+      encoding: 'buffer',
+      maxBuffer: MAX_IMAGE_DIFF_BYTES * 4,
+    });
+    if (stdout.length > MAX_IMAGE_DIFF_BYTES) return { tooLarge: true };
+    return { dataUrl: `data:${mime};base64,${stdout.toString('base64')}` };
+  } catch {
+    return null;
+  }
+};
 
 /**
  * Repo-relative path for a tool's `file_path` (absolute inside the clone, or

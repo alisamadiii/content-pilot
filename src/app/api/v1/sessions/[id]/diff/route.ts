@@ -1,5 +1,11 @@
 import { loadSessionForEdit, sessionCorsHeaders } from '@/lib/session-auth';
-import { IMAGE_PATH, isFullSha, resolveRepoPath, showFileAt } from '@/preview/file-diff';
+import {
+  IMAGE_PATH,
+  isFullSha,
+  resolveRepoPath,
+  showFileAt,
+  showImageAt,
+} from '@/preview/file-diff';
 import { loadSessionRevs, resolveAllowedRev } from '@/preview/session-revs';
 import { repoDir } from '@/worker/git';
 
@@ -38,15 +44,35 @@ export const GET = async (
   if (!path) {
     return Response.json({ error: 'Invalid path' }, { status: 400, headers });
   }
-  if (IMAGE_PATH.test(path)) {
-    return Response.json({ error: 'Binary file' }, { status: 415, headers });
-  }
-
   const revs = await loadSessionRevs(session.id, dir);
   const toRev = resolveAllowedRev(revs, to);
   const fromRev = resolveAllowedRev(revs, fromParam ?? `${to}~1`);
   if (!toRev || !fromRev) {
     return Response.json({ error: 'Unknown commit' }, { status: 404, headers });
+  }
+
+  // Images: both sides as data URLs so the hub can show them side by side
+  // (uploaded photos are the most common "new file" in a session).
+  if (IMAGE_PATH.test(path)) {
+    const [before, after] = await Promise.all([
+      showImageAt(dir, fromRev, path),
+      showImageAt(dir, toRev, path),
+    ]);
+    const url = (side: Awaited<ReturnType<typeof showImageAt>>) =>
+      side && 'dataUrl' in side ? side.dataUrl : null;
+    return Response.json(
+      {
+        path,
+        image: true,
+        before: url(before),
+        after: url(after),
+        truncated: false,
+        tooLarge: Boolean(
+          (before && 'tooLarge' in before) || (after && 'tooLarge' in after)
+        ),
+      },
+      { status: 200, headers: { ...headers, 'cache-control': 'private, max-age=3600' } }
+    );
   }
 
   const [before, after] = await Promise.all([

@@ -65,3 +65,47 @@ test('parseNameStatus returns [] for empty output', () => {
   assert.deepEqual(parseNameStatus(''), []);
   assert.deepEqual(parseNameStatus('\n\n'), []);
 });
+
+// ------------------------------------------------- image before/after (2026-10-18)
+
+test('imageMime maps image extensions (any case) and rejects source files', async () => {
+  const { imageMime } = await import('./file-diff');
+  assert.equal(imageMime('public/images/uploads/2.webp'), 'image/webp');
+  assert.equal(imageMime('a/B.JPG'), 'image/jpeg');
+  assert.equal(imageMime('x.jpeg'), 'image/jpeg');
+  assert.equal(imageMime('x.png'), 'image/png');
+  assert.equal(imageMime('x.svg'), 'image/svg+xml');
+  assert.equal(imageMime('x.ico'), 'image/x-icon');
+  assert.equal(imageMime('src/pages/index.astro'), null);
+  assert.equal(imageMime('noext'), null);
+});
+
+test('showImageAt returns a data URL for an image at a rev, null when absent, tooLarge above the cap', async () => {
+  const { execFile } = await import('child_process');
+  const { promisify } = await import('util');
+  const { mkdtemp, mkdir, writeFile } = await import('fs/promises');
+  const { tmpdir } = await import('os');
+  const { showImageAt, MAX_IMAGE_DIFF_BYTES } = await import('./file-diff');
+  const run = promisify(execFile);
+  const repo = await mkdtemp(join(tmpdir(), 'cp-imgdiff-'));
+  const sh = async (args: string[]) => (await run('git', args, { cwd: repo })).stdout.trim();
+  await sh(['init', '-q', '-b', 'main']);
+  await mkdir(join(repo, 'public/images'), { recursive: true });
+  // Tiny real-looking bytes incl. a NUL — anything binary-safe.
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01]);
+  await writeFile(join(repo, 'public/images/a.png'), png);
+  await writeFile(join(repo, 'public/images/big.png'), Buffer.alloc(MAX_IMAGE_DIFF_BYTES + 1, 1));
+  await sh(['add', '-A']);
+  await sh(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'img']);
+  const head = await sh(['rev-parse', 'HEAD']);
+
+  const got = await showImageAt(repo, head, 'public/images/a.png');
+  assert.ok(got && 'dataUrl' in got);
+  assert.equal(got.dataUrl, `data:image/png;base64,${png.toString('base64')}`);
+
+  assert.equal(await showImageAt(repo, head, 'public/images/missing.png'), null);
+  assert.equal(await showImageAt(repo, head, 'src/index.astro'), null, 'non-image path → null');
+
+  const big = await showImageAt(repo, head, 'public/images/big.png');
+  assert.deepEqual(big, { tooLarge: true });
+});
