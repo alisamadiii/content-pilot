@@ -10,6 +10,7 @@ import {
 } from '@/db/schema';
 import { previewUrlFor } from '@/preview/config';
 import { repoColor } from '@/lib/repo-color';
+import { formatDuration } from '@/lib/format-duration';
 import { AutoRefresh } from '../auto-refresh';
 import { SessionActions } from './session-actions';
 
@@ -183,6 +184,7 @@ const SessionsPage = async ({
               <th>tokens</th>
               <th>last activity</th>
               <th>created</th>
+              <th>duration</th>
               <th></th>
             </tr>
           </thead>
@@ -236,6 +238,9 @@ const SessionsPage = async ({
                   </td>
                   <td className="muted">{formatDate(row.lastActivityAt)}</td>
                   <td className="muted">{formatDate(row.createdAt)}</td>
+                  <td className="muted">
+                    {formatDuration(row.createdAt, row.lastActivityAt)}
+                  </td>
                   <td>
                     <div
                       style={{

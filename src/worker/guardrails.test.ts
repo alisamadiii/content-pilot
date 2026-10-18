@@ -113,3 +113,19 @@ test('session prompt: payment/login/checkout forms are never faked (round 3 #18b
   assert.match(SESSION_PROMPT, /Payments, donations, logins, sign-ups, checkout: you cannot wire these up/);
   assert.match(SESSION_PROMPT, /Never add a form that only looks like it works/);
 });
+
+test('session prompt: AI cannot see images, so it defers photo reframing to an edited upload (2026-10-18)', async () => {
+  const { SESSION_PROMPT } = await import('./guardrails');
+  assert.match(SESSION_PROMPT, /cannot see any image/);
+  assert.match(SESSION_PROMPT, /reposition, recenter, zoom, crop/);
+  assert.match(SESSION_PROMPT, /upload the edited version to replace the current one/);
+  assert.match(SESSION_PROMPT, /changing an element's or image's SIZE/);
+});
+
+test('session prompt: missing field/capability — judge, do it when simple, defer when tricky (2026-10-18)', async () => {
+  const { SESSION_PROMPT } = await import('./guardrails');
+  assert.match(SESSION_PROMPT, /If it is small and you can do it correctly and safely/);
+  assert.match(SESSION_PROMPT, /tricky or site-wide logic you can't be sure about/);
+  assert.match(SESSION_PROMPT, /do NOT invent a JSON field that nothing uses/);
+  assert.match(SESSION_PROMPT, /needs their developer to set it up once/);
+});
