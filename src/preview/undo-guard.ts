@@ -8,7 +8,7 @@
  */
 
 const UNDO_RE =
-  /\b(undo|revert|reverse|roll\s?back|rollback|restore|put\s+(?:\w+\s+){0,3}back|bring\s+(?:\w+\s+){0,3}back|change\s+(?:\w+\s+){0,3}back|go\s+back\s+to|back\s+to\s+(?:the\s+|its\s+|it'?s\s+|their\s+)?(?:original|previous|old|way)|(?:original|previous|old)\s+(?:data|version|text|state|content|one)|(?:how|what|the\s+way)\s+(?:it|they|that|this)\s+(?:was|were)(?:\s+before)?|as\s+(?:it|they)\s+(?:was|were)(?:\s+before)?)\b/i;
+  /\b(undo|revert|reverse|roll\s?back|rollback|restore|put\s+(?:\w+\s+){0,3}back|bring\s+(?:\w+\s+){0,3}back|change\s+(?:\w+\s+){0,3}back|go\s+back(?:\s+to)?|take\s+(?:it|that|this)\s+back|(?:liked|preferred|wanted)\s+(?:it|that|this)\s+before|(?:like|as)\s+(?:it\s+was\s+)?before|back\s+to\s+(?:the\s+|its\s+|it'?s\s+|their\s+)?(?:original|previous|old|way)|(?:original|previous|old)\s+(?:data|version|text|state|content|one)|(?:how|what|the\s+way)\s+(?:it|they|that|this)\s+(?:was|were)(?:\s+before)?|as\s+(?:it|they)\s+(?:was|were)(?:\s+before)?)\b/i;
 
 /** Cheap undo-intent check (no AI call), mirroring looksLikeEdit. */
 export const looksLikeUndo = (message: string) => UNDO_RE.test(message);

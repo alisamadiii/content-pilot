@@ -119,3 +119,20 @@ test('findAmbiguity: naming a button that does not exist still asks (no silent n
   assert.ok(q);
   assert.match(q, /“Hire me”, “Email me”/);
 });
+
+test("findAmbiguity: EmpowerHer #14 — a proper-name possessive (\"Fatima Noori's title\") is scoped, not a heading pick", () => {
+  const page = `<h1>Born from lived experience.</h1><h2>Our Mission</h2><h2>Our Team</h2>`;
+  const files = [{ path: 'src/pages/about-us.astro', content: page }];
+  assert.equal(findAmbiguity("Change Fatima Noori's title to Director.", files), null);
+  assert.equal(findAmbiguity("Update Nahid's photo", [{ path: 'p.astro', content: '<img alt="a"><img alt="b">' }]), null);
+  // Lower-case "its"/"it's" or a plain noun possessive does not count.
+  assert.ok(findAmbiguity("change the page's title to Welcome", files));
+});
+
+test('findAmbiguity: questions about work done ("did you also update the SEO title?") never pick elements', () => {
+  const files = [{ path: 'p.astro', content: '<h1>Our Story</h1><h2>Our Mission</h2>' }];
+  assert.equal(findAmbiguity('did you also update the SEO title?', files), null);
+  assert.equal(findAmbiguity('Which heading did you change?', files), null);
+  assert.equal(findAmbiguity('update the SEO title to Our Story', files), null, 'seo title is scoped');
+  assert.ok(findAmbiguity('update the title to Welcome', files), 'plain title with two headings still asks');
+});

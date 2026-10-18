@@ -102,3 +102,59 @@ test('describeReplace lists files for the model', () => {
   assert.equal(describeReplace({ ok: true, total: 0, files: [] }), 'No files contain that text. Nothing changed.');
   assert.equal(describeReplace({ ok: false, error: 'why' }), 'No changes made. why');
 });
+
+test('replaceInFiles: prose rename leaves routes, filenames, keys and attribute paths alone (EmpowerHer "Mentorship → Mentoring everywhere")', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cp-replace-ident-'));
+  await mkdir(join(dir, 'src/components'), { recursive: true });
+  await mkdir(join(dir, '.claude/skills/x'), { recursive: true });
+  await mkdir(join(dir, 'cms'), { recursive: true });
+  await writeFile(join(dir, 'src/components/Nav.astro'), [
+    '<a href="/mentorship" class="mentorship-link">Mentorship Program</a>',
+    '<img src="https://cdn.x/mentorship-hero.jpeg" alt="Mentorship" />',
+    '<p>Through mentorship and care. Mentorship matters.</p>',
+    '// Ports components/marketing/mentorship/hero.tsx',
+  ].join('\n'));
+  await writeFile(join(dir, '_site.json'), '{"mentorship": {"title": "Mentorship Program", "route": "/mentorship"}}');
+  await writeFile(join(dir, '.claude/skills/x/SKILL.md'), 'Mentorship page skill');
+  await writeFile(join(dir, 'AGENTS.md'), '| Mentorship workshops |');
+  await writeFile(join(dir, 'cms/workshops.yml'), 'description: Mentorship page');
+  const r1 = replaceInFiles({ dir, find: 'Mentorship', replace: 'Mentoring' });
+  const r2 = replaceInFiles({ dir, find: 'mentorship', replace: 'mentoring' });
+  assert.ok(r1.ok && r2.ok);
+  assert.equal(await readFile(join(dir, 'src/components/Nav.astro'), 'utf8'), [
+    '<a href="/mentorship" class="mentorship-link">Mentoring Program</a>',
+    '<img src="https://cdn.x/mentorship-hero.jpeg" alt="Mentoring" />',
+    '<p>Through mentoring and care. Mentoring matters.</p>',
+    '// Ports components/marketing/mentorship/hero.tsx',
+  ].join('\n'));
+  assert.equal(await readFile(join(dir, '_site.json'), 'utf8'), '{"mentorship": {"title": "Mentoring Program", "route": "/mentorship"}}');
+  // Developer files untouched.
+  assert.equal(await readFile(join(dir, '.claude/skills/x/SKILL.md'), 'utf8'), 'Mentorship page skill');
+  assert.equal(await readFile(join(dir, 'AGENTS.md'), 'utf8'), '| Mentorship workshops |');
+  assert.equal(await readFile(join(dir, 'cms/workshops.yml'), 'utf8'), 'description: Mentorship page');
+});
+
+test('isIdentifierContext / proseOccurrences: glued-to-path or key positions are code, spaced words are prose', async () => {
+  const { isIdentifierContext, proseOccurrences } = await import('./replace-in-files');
+  const text = 'see /mentorship and mentorship.astro and "mentorship": 1 and our mentorship program';
+  const positions = proseOccurrences(text, 'mentorship');
+  assert.deepEqual(positions.map((p) => text.slice(p - 1, p + 10)), [' mentorship']);
+  assert.ok(isIdentifierContext('x-mentorship', 2, 10));
+  assert.ok(!isIdentifierContext('a mentorship b', 2, 10));
+});
+
+test('describeReplace: reports occurrences deliberately left inside links/filenames/keys so the model stops hunting them', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cp-replace-skipped-'));
+  await mkdir(join(dir, 'src'), { recursive: true });
+  await writeFile(join(dir, 'src/Nav.astro'), '<a href="/mentorship">Mentorship</a> and /mentorship again');
+  const result = replaceInFiles({ dir, find: 'Mentorship', replace: 'Mentoring' });
+  assert.ok(result.ok);
+  assert.equal(result.total, 1);
+  assert.equal(result.skippedIdentifiers, 0, 'case-sensitive: lowercase /mentorship is a different needle');
+  const lower = replaceInFiles({ dir, find: 'mentorship', replace: 'mentoring' });
+  assert.ok(lower.ok);
+  assert.equal(lower.total, 0);
+  assert.equal(lower.skippedIdentifiers, 2);
+  assert.match(describeReplace(lower), /No prose contains that text\. Nothing changed\. Left 2 occurrences inside links, file names or data keys unchanged on purpose/);
+  assert.match(describeReplace(result), /^Replaced 1 occurrence in 1 file:/);
+});

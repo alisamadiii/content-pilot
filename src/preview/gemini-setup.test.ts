@@ -13,7 +13,10 @@ process.env.SESSION_GEMINI_MODEL = 'gemini-test-model';
 test('settings expose only the six edit tools — never shell or web; the only MCP server is ours', async () => {
   const { buildGeminiSettings, GEMINI_CORE_TOOLS } = await import('./gemini-setup');
   const s = buildGeminiSettings('m');
-  assert.deepEqual(s.tools.core, ['read_file', 'replace', 'write_file', 'glob', 'grep_search', 'list_directory']);
+  // 2026-10-18: the pilot MCP tool joins the allowlist under the CLI registry
+  // name (tools.core also filters MCP tools) — deliberate change, see the
+  // dedicated test below.
+  assert.deepEqual(s.tools.core, ['read_file', 'replace', 'write_file', 'glob', 'grep_search', 'list_directory', 'mcp_pilot_replace_in_files']);
   assert.deepEqual(s.tools.core, GEMINI_CORE_TOOLS);
   for (const banned of ['run_shell_command', 'web_fetch', 'google_web_search', 'activate_skill']) {
     assert.ok(!s.tools.core.includes(banned), banned);
@@ -95,4 +98,15 @@ test('gemini settings register the pilot replace tool as a trusted stdio MCP ser
     trust: true,
     timeout: 30_000,
   });
+});
+
+test('tools.core lists the pilot MCP tool under the CLI registry name, or the model cannot call it (2026-10-18)', async () => {
+  const { buildGeminiSettings, GEMINI_MCP_TOOL_NAMES } = await import('./gemini-setup');
+  const s = buildGeminiSettings('gemini-3.1-flash-lite');
+  assert.deepEqual(GEMINI_MCP_TOOL_NAMES, ['mcp_pilot_replace_in_files']);
+  assert.ok(s.tools.core.includes('mcp_pilot_replace_in_files'));
+  // Built-ins the editor relies on stay listed.
+  for (const name of ['read_file', 'replace', 'write_file', 'glob', 'grep_search', 'list_directory']) {
+    assert.ok(s.tools.core.includes(name), name);
+  }
 });

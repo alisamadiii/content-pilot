@@ -56,7 +56,15 @@ priority = 210
 interactive = false
 `;
 
-/** The only built-in tools an edit session needs. Everything else is unlisted. */
+/**
+ * Registry name the CLI gives an MCP tool: `mcp_<server>_<tool>`. The
+ * `tools.core` allowlist filters MCP tools too (verified 2026-10-18: with
+ * only built-ins listed the model got "Tool replace_in_files not found"),
+ * so our server's tools must be listed under this name.
+ */
+export const GEMINI_MCP_TOOL_NAMES = ['mcp_pilot_replace_in_files'];
+
+/** The only tools an edit session needs. Everything else is unlisted. */
 export const GEMINI_CORE_TOOLS = [
   'read_file',
   'replace',
@@ -64,6 +72,7 @@ export const GEMINI_CORE_TOOLS = [
   'glob',
   'grep_search',
   'list_directory',
+  ...GEMINI_MCP_TOOL_NAMES,
 ];
 
 /**

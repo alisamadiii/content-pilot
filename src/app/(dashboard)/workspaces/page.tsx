@@ -3,15 +3,21 @@ import { db } from '@/db';
 import { appSetting } from '@/db/schema';
 import { repoColor } from '@/lib/repo-color';
 import { listWorkspaces } from '@/lib/repos';
-import { AppDirForm, DeleteCloneButton, ProviderForm } from './repo-actions';
+import {
+  AppDirForm,
+  DeleteCloneButton,
+  GeminiTierForm,
+  ProviderForm,
+} from './repo-actions';
 
 export const dynamic = 'force-dynamic';
 
 const ReposPage = async () => {
-  const [rows, appDirRows, providerRows] = await Promise.all([
+  const [rows, appDirRows, providerRows, tierRows] = await Promise.all([
     listWorkspaces(),
     db.select().from(appSetting).where(like(appSetting.key, 'app_dir:%')),
     db.select().from(appSetting).where(like(appSetting.key, 'ai_provider:%')),
+    db.select().from(appSetting).where(like(appSetting.key, 'gemini_tier:%')),
   ]);
   const appDirs = new Map(
     appDirRows.map((r) => [Number(r.key.slice('app_dir:'.length)), r.value])
@@ -21,6 +27,13 @@ const ReposPage = async () => {
     providerRows.map((r) => [
       Number(r.key.slice('ai_provider:'.length)),
       r.value === 'claude' ? 'claude' : 'gemini',
+    ])
+  );
+  // Default free; only an explicit `paid` value selects the paid key.
+  const tiers = new Map(
+    tierRows.map((r) => [
+      Number(r.key.slice('gemini_tier:'.length)),
+      r.value === 'paid' ? 'paid' : 'free',
     ])
   );
 
@@ -43,6 +56,7 @@ const ReposPage = async () => {
               <th>branch</th>
               <th>app folder</th>
               <th>ai</th>
+              <th>gemini key</th>
               <th></th>
             </tr>
           </thead>
@@ -86,6 +100,17 @@ const ReposPage = async () => {
                         (providers.get(row.repoId) ?? 'gemini') as
                           | 'claude'
                           | 'gemini'
+                      }
+                    />
+                  </td>
+                  <td>
+                    <GeminiTierForm
+                      repoId={row.repoId}
+                      value={
+                        (tiers.get(row.repoId) ?? 'free') as 'free' | 'paid'
+                      }
+                      disabled={
+                        (providers.get(row.repoId) ?? 'gemini') === 'claude'
                       }
                     />
                   </td>

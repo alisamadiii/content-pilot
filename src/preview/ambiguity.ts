@@ -27,9 +27,14 @@ const PLURAL_OR_ALL =
 
 /** The owner already scoped it (position, section) — the model can resolve. */
 const SCOPED =
-  /\b(first|second|third|fourth|fifth|sixth|last|1st|2nd|3rd|4th|5th|6th|top|bottom|left|right|hero|header|footer|nav|navigation|menu|banner|sidebar|card|section|form|modal|popup|newsletter|testimonial|faq|pricing|gallery|contact|mission|partners?|programs?|stats?|about)\b/i;
+  /\b(first|second|third|fourth|fifth|sixth|last|1st|2nd|3rd|4th|5th|6th|top|bottom|left|right|hero|header|footer|nav|navigation|menu|banner|sidebar|card|section|form|modal|popup|newsletter|testimonial|faq|pricing|gallery|contact|mission|partners?|programs?|stats?|about|seo|meta|page\s+title|tab\s+title|browser\s+title|og\s+image)\b/i;
 
 export const MAX_LISTED = 8;
+
+const QUESTION = /^(?:did|do|does|have|has|had|is|are|was|were|can|could|will|would|should|what|which|why|how|when|where|who)\b[\s\S]*\?\s*$/i;
+
+/** `Nahid's`, `Fatima Noori's`, `Right to Learn Afghanistan's` */
+const PROPER_POSSESSIVE = /\b[A-Z][\p{L}\p{N}-]*(?:\s+(?:[A-Z][\p{L}\p{N}-]*|to|of|the|and|&))*['’]s\s+\w/u;
 
 const stripTags = (html: string) =>
   html
@@ -108,6 +113,12 @@ export const findAmbiguity = (
 ): string | null => {
   if (!files.length || !looksLikeEdit(message)) return null;
   if (PLURAL_OR_ALL.test(message) || SCOPED.test(message)) return null;
+  // "did you also update the SEO title?" is a question about work done, not
+  // a request to pick an element.
+  if (QUESTION.test(message.trim())) return null;
+  // "Change Fatima Noori's title": a proper-name possessive names the owner of
+  // the element (a person's title/photo/role), not a page element to pick.
+  if (PROPER_POSSESSIVE.test(message)) return null;
   const kind = requestedKind(message);
   if (!kind) return null;
   const candidates = [...new Set(files.flatMap((file) => extractCandidates(kind, file.content)))];

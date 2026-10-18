@@ -4,18 +4,23 @@ import { appSetting } from '@/db/schema';
 import {
   appDirKey,
   clampMaxSessions,
+  geminiTierKey,
   MAX_SESSIONS_KEY,
+  normalizeGeminiTier,
   normalizeProvider,
   providerKey,
   sanitizeAppDir,
   type AiProvider,
+  type GeminiTier,
 } from './settings-rules';
 
 export {
   appDirKey,
+  geminiTierKey,
   MAX_SESSIONS_KEY,
   providerKey,
   type AiProvider,
+  type GeminiTier,
 } from './settings-rules';
 
 /** Read a raw setting value, or null when unset. */
@@ -60,6 +65,14 @@ export const getAppDir = async (repoId: number): Promise<string | null> => {
  */
 export const getProvider = async (repoId: number): Promise<AiProvider> =>
   normalizeProvider(await getSetting(providerKey(repoId)));
+
+/**
+ * The Gemini key tier a repo's sessions use: `free` (default) or `paid`. Read
+ * live per message, so a change in the admin takes effect on the next message
+ * (unlike provider, which is bound per session).
+ */
+export const getGeminiTier = async (repoId: number): Promise<GeminiTier> =>
+  normalizeGeminiTier(await getSetting(geminiTierKey(repoId)));
 
 /**
  * Effective cap on concurrent live preview sessions: the DB override when set

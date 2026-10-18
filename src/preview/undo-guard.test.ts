@@ -43,3 +43,11 @@ test('UNDO_REPLY points the owner at the header Changes dialog and manual revert
   assert.match(UNDO_REPLY, /Changes button in the header/);
   assert.match(UNDO_REPLY, /manually/);
 });
+
+test('looksLikeUndo: bare "go back", "take it back", "I liked it before" (EmpowerHer round 3) hit', () => {
+  for (const message of ['go back', 'Go back please', 'take it back', 'I liked it before', 'make it like before', 'as it was before']) {
+    assert.ok(looksLikeUndo(message), message);
+  }
+  assert.ok(!looksLikeUndo('add a back button'));
+  assert.ok(!looksLikeUndo('the back cover image'));
+});

@@ -12,8 +12,12 @@ import {
   PREVIEW_SESSION_LIVE_STATUSES,
 } from '@/db/schema';
 import { auth } from '@/lib/auth';
-import { appDirKey, providerKey, setSetting } from '@/lib/settings';
-import { normalizeProvider, sanitizeAppDir } from '@/lib/settings-rules';
+import { appDirKey, geminiTierKey, providerKey, setSetting } from '@/lib/settings';
+import {
+  normalizeGeminiTier,
+  normalizeProvider,
+  sanitizeAppDir,
+} from '@/lib/settings-rules';
 import { config } from '@/worker/config';
 
 const requireSession = async () => {
@@ -95,5 +99,22 @@ export const setProvider = async (repoId: number, value: string) => {
     throw new Error('Provider must be claude or gemini.');
   }
   await setSetting(providerKey(repoId), normalizeProvider(value));
+  revalidatePath('/workspaces');
+};
+
+/**
+ * Sets a repo's Gemini key tier: `free` (default, unpaid sites) or `paid`.
+ * Read live per message, so the change takes effect on the next message. Only
+ * matters when the provider is gemini; harmless for claude projects.
+ */
+export const setGeminiTier = async (repoId: number, value: string) => {
+  await requireSession();
+  if (!Number.isInteger(repoId) || repoId <= 0) {
+    throw new Error('Invalid repo id.');
+  }
+  if (value !== 'free' && value !== 'paid') {
+    throw new Error('Gemini tier must be free or paid.');
+  }
+  await setSetting(geminiTierKey(repoId), normalizeGeminiTier(value));
   revalidatePath('/workspaces');
 };

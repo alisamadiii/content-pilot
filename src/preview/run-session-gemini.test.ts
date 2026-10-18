@@ -201,3 +201,16 @@ test('extractTokens reads cached token counts when the CLI reports them', () => 
     cached: null,
   });
 });
+
+test('interpretGeminiEvent maps the CLI registry name mcp_pilot_replace_in_files to the hub name (2026-10-18)', () => {
+  const it = interpretGeminiEvent({
+    type: 'tool_use',
+    tool_name: 'mcp_pilot_replace_in_files',
+    parameters: { find: '#1554A8', replace: '#5B21B6' },
+  });
+  assert.deepEqual(it, {
+    kind: 'tool',
+    name: 'mcp__pilot__replace_in_files',
+    input: { find: '#1554A8' },
+  });
+});

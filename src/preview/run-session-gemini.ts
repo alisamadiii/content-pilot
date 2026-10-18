@@ -40,7 +40,10 @@ export const TOOL_NAME_MAP: Record<string, string> = {
   grep_search: 'Grep',
   search_file_content: 'Grep',
   // Our stdio MCP tool (gemini-setup.ts) — same name the Claude SDK exposes.
+  // The CLI registers it as `mcp_pilot_replace_in_files`; the bare name is
+  // kept for older streams/hallucinated calls.
   replace_in_files: 'mcp__pilot__replace_in_files',
+  mcp_pilot_replace_in_files: 'mcp__pilot__replace_in_files',
 };
 
 const firstString = (
@@ -257,6 +260,12 @@ export const runSessionGemini = async (params: {
    * the Claude runner ignores it.
    */
   systemPromptPath?: string;
+  /**
+   * The Gemini API key for this run (free or paid, chosen per-repo by the
+   * gemini_tier setting). When set it overrides the inherited GEMINI_API_KEY
+   * so a paid project bills the paid account. The Claude runner ignores it.
+   */
+  geminiApiKey?: string;
 }): Promise<SessionClaudeRun> => {
   let resultText = '';
   let streamedText = '';
@@ -303,6 +312,8 @@ export const runSessionGemini = async (params: {
       ...(params.systemPromptPath
         ? { GEMINI_SYSTEM_MD: params.systemPromptPath }
         : {}),
+      // Per-repo tier key overrides the global GEMINI_API_KEY inherited above.
+      ...(params.geminiApiKey ? { GEMINI_API_KEY: params.geminiApiKey } : {}),
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });

@@ -107,3 +107,9 @@ test('session prompt forbids guessing between several matching elements (2026-10
   assert.match(SESSION_PROMPT, /Never change several elements to satisfy a singular request/);
   assert.match(SESSION_PROMPT, /not a request to edit that page/);
 });
+
+test('session prompt: payment/login/checkout forms are never faked (round 3 #18b)', async () => {
+  const { SESSION_PROMPT } = await import('./guardrails');
+  assert.match(SESSION_PROMPT, /Payments, donations, logins, sign-ups, checkout: you cannot wire these up/);
+  assert.match(SESSION_PROMPT, /Never add a form that only looks like it works/);
+});

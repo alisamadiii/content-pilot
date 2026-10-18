@@ -25,6 +25,8 @@ import {
 } from './attachments';
 import type { ClaudeUsage } from './usage';
 import { previewConfig } from './config';
+import { getGeminiTier } from '@/lib/settings';
+import { resolveGeminiKey } from '@/lib/settings-rules';
 import { emitEvent, emitEvents } from './events';
 import { writeGeminiSystemPrompt } from './gemini-system-prompt';
 import { RECAP_MAX_MESSAGES, renderRecap, sanitizeForClient } from './recap';
@@ -32,6 +34,21 @@ import { buildRepoContext } from './repo-context';
 import { looksLikeUndo, UNDO_REPLY } from './undo-guard';
 import { claimsChange, HONESTY_REPAIR_PROMPT } from './honesty';
 import { findAmbiguity } from './ambiguity';
+import {
+  refersToEarlierItem,
+  refersToPrevious,
+  withPreviousRequest,
+  withRecentRequests,
+} from './same-as-before';
+import { isVagueStylingRequest, VAGUE_REPLY } from './vague-guard';
+import { isQuotaError, QUOTA_MESSAGE } from './provider-errors';
+import {
+  collectionHints,
+  duplicateNote,
+  findCollectionEntries,
+  siteWideNote,
+  todayLine,
+} from './request-notes';
 import { runSessionClaude } from './run-session-claude';
 import { runSessionGemini } from './run-session-gemini';
 import { liveSession } from './sessions';
@@ -100,6 +117,28 @@ const buildRecap = async (
     .orderBy(desc(previewMessage.id))
     .limit(RECAP_MAX_MESSAGES);
   return renderRecap(rows.reverse());
+};
+
+/** The owner's last few finished requests, newest first. */
+const recentUserContents = async (
+  sessionId: string,
+  beforeMessageId: number,
+  limit: number
+): Promise<string[]> => {
+  const rows = await db
+    .select({ content: previewMessage.content })
+    .from(previewMessage)
+    .where(
+      and(
+        eq(previewMessage.sessionId, sessionId),
+        eq(previewMessage.role, 'user'),
+        lt(previewMessage.id, beforeMessageId),
+        eq(previewMessage.status, 'done')
+      )
+    )
+    .orderBy(desc(previewMessage.id))
+    .limit(limit);
+  return rows.map((row) => row.content);
 };
 
 /** The owner's previous finished message (for skill carry-over). */
@@ -202,6 +241,21 @@ const processMessage = async (row: MessageRow) => {
     provider === 'gemini' ? runSessionGemini : runSessionClaude;
   const costIsCumulative = provider === 'claude';
 
+  // Gemini key tier (free/paid) is read live per message from the per-repo
+  // gemini_tier setting (no session column — the key choice can't corrupt
+  // resume state, which gemini doesn't use). Undefined for Claude.
+  let geminiApiKey: string | undefined;
+  let geminiTier: 'free' | 'paid' | undefined;
+  if (provider === 'gemini') {
+    const resolved = resolveGeminiKey({
+      tier: await getGeminiTier(sessionRow.repoId),
+      freeKey: previewConfig.geminiApiKey,
+      paidKey: previewConfig.geminiApiKeyPaid,
+    });
+    geminiApiKey = resolved.key;
+    geminiTier = resolved.tier;
+  }
+
   // Previews run without an AI key; chat can't. Fail instantly with a clear
   // reason instead of letting the agent retry a missing/bad key for minutes.
   const aiDown = aiUnavailableReason(provider);
@@ -217,6 +271,13 @@ const processMessage = async (row: MessageRow) => {
   // Undo / revert is manual (header Changes dialog → Revert per file): the
   // AI never reconstructs old content from memory. Fixed reply, no agent run,
   // no tokens. Skill invocations are exempt — the skill defines their scope.
+  // Vague styling wish ("make it pop"): one specific question, no run.
+  if (!parseSkillInvocation(row.content) && isVagueStylingRequest(row.content)) {
+    await finishMessage(row, { status: 'done' }, VAGUE_REPLY);
+    log(`session ${row.sessionId}: message #${row.id} answered by the vague-request guard`);
+    return;
+  }
+
   if (!parseSkillInvocation(row.content) && looksLikeUndo(row.content)) {
     await finishMessage(row, { status: 'done' }, UNDO_REPLY);
     log(`session ${row.sessionId}: message #${row.id} answered by the undo guard`);
@@ -272,12 +333,23 @@ const processMessage = async (row: MessageRow) => {
     // A bare "/skill" turn asks a question; the owner's next message is the
     // answer and runs under that same skill (Gemini has no conversation
     // memory between messages, so the skill text must be inlined again).
+    const previousRequest = await previousUserContent(row.sessionId, row.id);
     const invocation =
       parseSkillInvocation(row.content) ??
-      carrySkillFromPrevious(
-        await previousUserContent(row.sessionId, row.id),
-        row.content
+      carrySkillFromPrevious(previousRequest, row.content);
+    // "Do the same for the resources page": restate the previous request
+    // inline (fresh Gemini conversations do not resolve "the same" from the
+    // recap). Skills carry their own context.
+    if (!invocation && previousRequest && refersToPrevious(row.content)) {
+      request = withPreviousRequest(row.content, previousRequest);
+    } else if (!invocation && refersToEarlierItem(row.content)) {
+      // "update the resource I added earlier": hand over the recent requests
+      // so the target is resolved from them, not guessed from the data file.
+      request = withRecentRequests(
+        row.content,
+        await recentUserContents(row.sessionId, row.id, 4)
       );
+    }
     if (invocation && provider === 'gemini') {
       const skill = await loadSkill(session.dir, session.appDir, invocation.name);
       if (skill) {
@@ -324,7 +396,19 @@ const processMessage = async (row: MessageRow) => {
         })
       : [];
     const attachBlock = placed.length ? buildAttachmentsBlock(placed) : '';
-    const preamble = [row.context, pinnedFile, attachBlock, skillBlock]
+    // Server-known facts the model would otherwise discover or guess (see
+    // ./request-notes): today's date, which collection file a named entry
+    // lives in, duplicate adds, "everywhere" scope. A few tokens, zero calls.
+    const entryHits = await findCollectionEntries(session.dir, row.content).catch(() => []);
+    const notes = [
+      todayLine(),
+      collectionHints(entryHits),
+      duplicateNote(row.content, entryHits),
+      siteWideNote(row.content),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    const preamble = [row.context, notes, pinnedFile, attachBlock, skillBlock]
       .filter(Boolean)
       .join('\n\n');
     const prompt = preamble ? `${preamble}\n\n---\n\n${request}` : request;
@@ -352,6 +436,7 @@ const processMessage = async (row: MessageRow) => {
       claudeSessionId: resumeId,
       signal: cancelController.signal,
       systemPromptPath,
+      geminiApiKey,
       onEvent,
     });
 
@@ -374,6 +459,7 @@ const processMessage = async (row: MessageRow) => {
         claudeSessionId: null,
         signal: cancelController.signal,
         systemPromptPath,
+        geminiApiKey,
         onEvent,
       });
     }
@@ -434,7 +520,9 @@ const processMessage = async (row: MessageRow) => {
           status: 'failed',
           error: run.timedOut
             ? `The edit took too long and was stopped after ${Math.round(previewConfig.messageTimeoutMs / 60000)} minutes, so nothing was applied. Please try a smaller or simpler request.`
-            : stderrForClient
+            : isQuotaError(run.stderr)
+              ? QUOTA_MESSAGE
+              : stderrForClient
               ? `The AI could not complete this request, so nothing was applied.\n\nThe error was: ${stderrForClient}\n\nYou can try again, or share this error with your developer.`
               : 'The AI could not complete this request. Please try again.',
           errorDetail: sanitize(run.stderr) || null,
@@ -463,6 +551,7 @@ const processMessage = async (row: MessageRow) => {
         claudeSessionId,
         signal: cancelController.signal,
         systemPromptPath,
+        geminiApiKey,
         onEvent,
       });
       usage = addUsage(usage, honest.usage, !costIsCumulative);
@@ -549,6 +638,7 @@ const processMessage = async (row: MessageRow) => {
           claudeSessionId,
           signal: cancelController.signal,
           systemPromptPath,
+          geminiApiKey,
           onEvent,
         });
         usage = addUsage(usage, repair.usage, !costIsCumulative);
@@ -616,7 +706,7 @@ const processMessage = async (row: MessageRow) => {
       costIsCumulative
     );
     log(
-      `session ${row.sessionId}: message #${row.id} done${sha ? ` — ${sha.slice(0, 7)}` : ' (no changes)'} [${provider} tools=${toolCalls} in=${usage.inputTokens ?? '?'} out=${usage.outputTokens ?? '?'}]`
+      `session ${row.sessionId}: message #${row.id} done${sha ? ` — ${sha.slice(0, 7)}` : ' (no changes)'} [${provider}${geminiTier ? `/${geminiTier}` : ''} tools=${toolCalls} in=${usage.inputTokens ?? '?'} out=${usage.outputTokens ?? '?'}]`
     );
   } catch (error) {
     const message = sanitize((error as Error).message || 'unknown error');

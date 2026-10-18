@@ -29,6 +29,11 @@ export const previewConfig = {
   // cheap tier (1M context); plain `gemini-3.1-flash` is not offered on the
   // Gemini API — only the `-lite` variant is callable. Override via env.
   geminiModel: process.env.SESSION_GEMINI_MODEL || 'gemini-3.1-flash-lite',
+  // Two Gemini keys: the free-tier key (default, for unpaid client sites) and
+  // an optional paid-tier key. A workspace is toggled free/paid in the admin
+  // (gemini_tier:<repoId>); the runner picks the matching key per message.
+  geminiApiKey: process.env.GEMINI_API_KEY || '',
+  geminiApiKeyPaid: process.env.GEMINI_API_KEY_PAID || '',
   // Gemini emits token counts, not dollars — cost is computed from these.
   // Defaults track Gemini 3.1 Flash-Lite pricing (USD per 1M tokens); override
   // per model via env.

@@ -89,6 +89,8 @@ export const runSessionClaude = async (params: {
   signal?: AbortSignal;
   /** Gemini-only (its replacement system prompt file); ignored here. */
   systemPromptPath?: string;
+  /** Gemini-only (per-repo key tier); ignored here. */
+  geminiApiKey?: string;
 }): Promise<SessionClaudeRun> => {
   let resultText = '';
   let claudeSessionId = params.claudeSessionId;
