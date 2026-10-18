@@ -71,12 +71,11 @@ export const reconcileTick = async () => {
 
   const byId = new Map(rows.map((row) => [row.id, row]));
 
-  // New sessions created by the API (status 'starting', no process yet).
-  for (const row of rows) {
-    if (row.status === 'starting') launch(row);
-  }
-
-  // Sessions the API marked terminal while their process still runs.
+  // Sessions the API marked terminal while their process still runs. Torn
+  // down BEFORE launching new rows: a branch switch closes the old session and
+  // creates the new one back to back, and both share the repo's single clone,
+  // so the old dev server must be dead before `syncRepo` checks out the new
+  // branch under it.
   for (const id of liveIds()) {
     const row = byId.get(id);
     if (!row || (row.status !== 'starting' && !LIVE.includes(row.status))) {
@@ -85,6 +84,11 @@ export const reconcileTick = async () => {
         row?.status === 'published' ? 'published' : 'closed'
       );
     }
+  }
+
+  // New sessions created by the API (status 'starting', no process yet).
+  for (const row of rows) {
+    if (row.status === 'starting') launch(row);
   }
 
   // Pause requests: abort the in-flight run. Clear the flag either way — a

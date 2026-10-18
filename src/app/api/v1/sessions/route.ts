@@ -13,13 +13,23 @@ import {
   sessionCorsHeaders,
 } from '@/lib/session-auth';
 import { previewUrlFor } from '@/preview/config';
+import { isPreviewBranch, isValidBranchName } from '@/preview/branch-name';
 
 const LIVE = [...PREVIEW_SESSION_LIVE_STATUSES];
 
 const createSchema = z.object({
   repoId: z.number().int().positive(),
   requestedBy: z.string().trim().max(200).optional(),
+  /**
+   * Named branch to run the session ON (commits land there and persist).
+   * Omitted = the default-branch preview on an ephemeral `preview/<id>`.
+   */
+  branch: z.string().trim().min(1).max(100).optional(),
 });
+
+/** Two sessions are "the same branch" when both are named-and-equal, or both are default previews. */
+const sameBranch = (existing: string, requested: string | undefined) =>
+  requested === undefined ? isPreviewBranch(existing) : existing === requested;
 
 const publicSession = (row: typeof previewSession.$inferSelect) => ({
   id: row.id,
@@ -58,6 +68,12 @@ export const POST = async (request: Request) => {
   if (auth.kind === 'edit-token' && auth.payload.repoId !== input.repoId) {
     return Response.json({ error: 'Forbidden' }, { status: 403, headers });
   }
+  if (input.branch !== undefined && !isValidBranchName(input.branch)) {
+    return Response.json(
+      { error: 'Invalid branch name.' },
+      { status: 400, headers }
+    );
+  }
 
   // One live session per repo — a second start joins the existing session
   // (two hub tabs / two collaborators share one preview). A paused session is
@@ -73,6 +89,15 @@ export const POST = async (request: Request) => {
       )
     )
     .limit(1);
+  // A session on another branch can't be joined: one clone per repo means one
+  // checked-out branch. The hub closes the old session before asking for a new
+  // branch, so this only fires on a race between two tabs.
+  if (existing && !sameBranch(existing.branch, input.branch)) {
+    return Response.json(
+      { error: 'branch_mismatch', session: publicSession(existing) },
+      { status: 409, headers }
+    );
+  }
   if (existing && existing.status !== 'paused') {
     return Response.json(publicSession(existing), { status: 200, headers });
   }
@@ -130,7 +155,7 @@ export const POST = async (request: Request) => {
       repoId: input.repoId,
       owner: resolved.owner,
       repo: resolved.repo,
-      branch: `preview/${id}`,
+      branch: input.branch ?? `preview/${id}`,
       status: 'starting',
       provider,
       requestedBy: input.requestedBy,

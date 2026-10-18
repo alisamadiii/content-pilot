@@ -56,7 +56,7 @@ Endpoints accept either an `x-api-key` header (server-to-server) or a Bearer edi
 
 | Method | Path | Description |
 | --- | --- | --- |
-| POST | `/api/v1/sessions` | Create or join a live session: `{ repoId, requestedBy? }` |
+| POST | `/api/v1/sessions` | Create or join a live session: `{ repoId, requestedBy?, branch? }`. `branch` runs the session on a named branch (commits persist there); omitted = ephemeral `preview/<id>` off the default branch. 409 `branch_mismatch` when the repo's live session is on another branch (close it first) |
 | GET | `/api/v1/sessions?repoId=` | Current session for a repo (omit `repoId`, api-key only, for all live sessions) |
 | GET | `/api/v1/sessions/:id` | Session status |
 | POST | `/api/v1/sessions/:id/messages` | Send a chat message (queues an AI edit turn) |
