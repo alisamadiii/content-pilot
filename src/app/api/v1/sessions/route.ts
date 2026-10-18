@@ -6,7 +6,7 @@ import {
   previewSession,
 } from '@/db/schema';
 import { resolveRepo } from '@/lib/resolve-repo';
-import { getMaxSessions, getProvider } from '@/lib/settings';
+import { getGeminiTier, getMaxSessions, getProvider } from '@/lib/settings';
 import {
   authenticateSessionRequest,
   newSessionId,
@@ -40,6 +40,7 @@ const publicSession = (row: typeof previewSession.$inferSelect) => ({
   branch: row.branch,
   previewUrl: previewUrlFor(row.id),
   error: row.error,
+  provider: row.provider,
   createdAt: row.createdAt,
 });
 
@@ -217,7 +218,11 @@ export const GET = async (request: Request) => {
     .orderBy(desc(previewSession.createdAt))
     .limit(1);
   return Response.json(
-    { session: row ? publicSession(row) : null },
+    {
+      session: row
+        ? { ...publicSession(row), geminiTier: await getGeminiTier(repoId) }
+        : null,
+    },
     { status: 200, headers }
   );
 };

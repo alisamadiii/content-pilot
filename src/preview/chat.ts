@@ -14,6 +14,7 @@ import {
   changedFiles,
   commitAndPush,
   discardChanges,
+  git,
   sanitize,
 } from '../worker/git';
 import {
@@ -41,7 +42,13 @@ import {
   withRecentRequests,
 } from './same-as-before';
 import { isVagueStylingRequest, VAGUE_REPLY } from './vague-guard';
-import { isQuotaError, QUOTA_MESSAGE } from './provider-errors';
+import {
+  DAILY_QUOTA_MESSAGE,
+  isDailyQuotaError,
+  isQuotaError,
+  QUOTA_MESSAGE,
+} from './provider-errors';
+import { isFramingOnlyDiff, REFRAME_REPLY } from './reframe-revert';
 import {
   collectionHints,
   duplicateNote,
@@ -521,7 +528,9 @@ const processMessage = async (row: MessageRow) => {
           error: run.timedOut
             ? `The edit took too long and was stopped after ${Math.round(previewConfig.messageTimeoutMs / 60000)} minutes, so nothing was applied. Please try a smaller or simpler request.`
             : isQuotaError(run.stderr)
-              ? QUOTA_MESSAGE
+              ? isDailyQuotaError(run.stderr)
+                ? DAILY_QUOTA_MESSAGE
+                : QUOTA_MESSAGE
               : stderrForClient
               ? `The AI could not complete this request, so nothing was applied.\n\nThe error was: ${stderrForClient}\n\nYou can try again, or share this error with your developer.`
               : 'The AI could not complete this request. Please try again.',
@@ -590,6 +599,29 @@ const processMessage = async (row: MessageRow) => {
     if (forbidden.length) {
       await rejectForbidden(forbidden);
       return;
+    }
+
+    // Blind photo reframing: if the only thing the agent changed is an image's
+    // object-position/object-fit (which it can't see, so can't verify), revert
+    // it and tell the owner to upload an edited replacement. Guarantees the
+    // prompt rule even when the model ignores it; a real edit touches other
+    // lines, so legitimate work is never reverted. (See ./reframe-revert.)
+    if (changed.length) {
+      const diff = await git(session.dir, ['diff', 'HEAD']).catch(() => '');
+      if (isFramingOnlyDiff(diff)) {
+        await persistClaudeSessionId();
+        await discardChanges(session.dir);
+        await finishMessage(
+          row,
+          { status: 'done', ...usage },
+          REFRAME_REPLY,
+          costIsCumulative
+        );
+        log(
+          `session ${row.sessionId}: message #${row.id} reverted a blind photo reframe`
+        );
+        return;
+      }
     }
 
     // Verify the change didn't break the preview (invalid JSON, page 500s)
