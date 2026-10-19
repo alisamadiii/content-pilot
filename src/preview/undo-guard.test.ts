@@ -51,3 +51,21 @@ test('looksLikeUndo: bare "go back", "take it back", "I liked it before" (Empowe
   assert.ok(!looksLikeUndo('add a back button'));
   assert.ok(!looksLikeUndo('the back cover image'));
 });
+
+test('looksLikeUndo: a long pasted submission with an incidental undo phrase does not hit (EmpowerHer 2026-10-19)', () => {
+  // The author's story said "continuing education was no longer possible like
+  // before" — an incidental "like before" buried in a 4k-char content paste.
+  // A submission is not an undo request; above the length ceiling it goes to
+  // the AI instead of being refused by the guard.
+  const submission =
+    'Author\nElaha Amiri\nTitle\nThe Girl Who Kept Learning\nStory\n' +
+    'A sudden event changed my educational path. Educational centers were ' +
+    'closed, and continuing education was no longer possible like before. ' +
+    'But I did not want to give up. '.repeat(20) +
+    '\nBio\nElaha Amiri is an Afghan student passionate about learning.';
+  assert.ok(submission.length > 400);
+  assert.ok(!looksLikeUndo(submission));
+
+  // A genuine short undo that happens to say "like before" still hits.
+  assert.ok(looksLikeUndo('make it like before'));
+});
