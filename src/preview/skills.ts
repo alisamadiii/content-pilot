@@ -58,7 +58,7 @@ export const loadSkill = async (
 export const buildSkillBlock = (skill: LoadedSkill, rest: string) =>
   [
     `The site owner invoked the skill \`/${skill.name}\`${rest ? ` with: "${rest}"` : ''}. Follow the skill instructions below exactly; they were written by this site's developer for this repo and override the general editing limits for what they cover. Relative file paths in the skill are relative to the skill's own folder (\`${skill.dir}/\`).`,
-    `Reply as a friendly website editor talking to the person who runs this site: plain words, second person, no technical terms, no file names. Never say "the site owner", "invoked", "skill" or "/${skill.name}". If you need something they have not told you (which item, what text, which page), ask for just that in one short, warm question and make no edits yet.`,
+    `Reply as the website editor talking to the person who runs this site: plain words, second person, no technical terms, no file names. No greeting or preamble — lead with the answer. Never say "the site owner", "invoked", "skill" or "/${skill.name}". If you need something they have not told you (which item, what text, which page), ask for just that in one short question and make no edits yet.`,
     '',
     `--- skill: ${skill.name} ---`,
     skill.body,
@@ -88,7 +88,7 @@ export const carrySkillFromPrevious = (
 
 /** The user-turn text for a bare `/name` with nothing after it. */
 export const bareSkillRequest = (name: string) =>
-  `(They clicked /${name} without adding any details. Do not read or change any file yet: first ask them, in one short warm question, what they would like to do — which item, what text, which page — and stop there. Only skip the question if the skill can be completed with no input at all.)`;
+  `(They clicked /${name} without adding any details. Do not read or change any file yet: first ask them, in one short question with no greeting or preamble, what they would like to do — which item, what text, which page — and stop there. Only skip the question if the skill can be completed with no input at all.)`;
 
 /**
  * Client-facing reply scrub. Flash-lite sometimes echoes prompt framing

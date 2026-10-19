@@ -86,7 +86,9 @@ test('buildSkillBlock wraps the body with the invocation and precedence note', (
   assert.match(block, /override the general editing limits/);
   assert.match(block, /relative to the skill's own folder \(`\.gemini\/skills\/add-page\/`\)/);
   assert.match(block, /--- skill: add-page ---\nDo X\.\n--- end of skill ---/);
-  assert.match(block, /friendly website editor talking to the person who runs this site/);
+  // 2026-10-19: wording tightened to drop "friendly"/greeting (terse replies).
+  assert.match(block, /the website editor talking to the person who runs this site/);
+  assert.match(block, /No greeting or preamble — lead with the answer/);
   assert.match(block, /Never say "the site owner", "invoked", "skill"/);
   assert.doesNotMatch(buildSkillBlock({ ...skill, name: 'x' }, ''), /with:/);
 });

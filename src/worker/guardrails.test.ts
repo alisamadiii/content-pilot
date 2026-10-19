@@ -100,6 +100,12 @@ test('session prompt forbids claiming a change that was not made (2026-10-18)', 
   assert.match(SESSION_PROMPT, /already exists, say it is already there/);
 });
 
+test('session prompt tells replies to drop greetings and preamble (2026-10-19)', async () => {
+  const { SESSION_PROMPT } = await import('../worker/guardrails');
+  assert.match(SESSION_PROMPT, /Lead with the result in one short sentence/);
+  assert.match(SESSION_PROMPT, /No greeting, no "Welcome"/);
+});
+
 test('session prompt forbids guessing between several matching elements (2026-10-18)', async () => {
   const { SESSION_PROMPT } = await import('./guardrails');
   assert.match(SESSION_PROMPT, /Never guess the target/);
