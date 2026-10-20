@@ -84,7 +84,13 @@ export const planPlacements = async (params: {
         .where(eq(previewAttachment.id, row.id));
       row.placedPath = dest;
     }
-    placed.push({ row, dest, url: '/' + dest.slice(publicRel.length + 1) });
+    // Empty publicRel (static root repos): dest is already root-relative — the
+    // old slice would eat its first character.
+    placed.push({
+      row,
+      dest,
+      url: '/' + (publicRel ? dest.slice(publicRel.length + 1) : dest),
+    });
   }
   return placed;
 };

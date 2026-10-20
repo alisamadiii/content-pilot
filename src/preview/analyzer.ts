@@ -99,6 +99,27 @@ export default mergeConfig(
 );
 `;
 
+// Wrapper config for plain static repos, served by the PILOT's own Vite (see
+// pilotViteBin in session-boot). Import-free apart from the sibling plugin: a
+// bare `import ... from 'vite'` could never resolve from a clone outside the
+// pilot install, and there is no client config to merge anyway.
+const staticWrapper = () => `import { aiAnalyzerStatic } from './vite-plugin-static.mjs';
+
+${HMR_SNIPPET}
+
+export default {
+  // MPA: /about and /about/ serve about.html / about/index.html as real pages;
+  // no SPA fallback swallowing unknown paths into index.html.
+  appType: 'mpa',
+  // Vite's default cacheDir is node_modules/.vite in the CLONE — static repos
+  // often have no .gitignore, so publish's \`git add -A\` would stage it.
+  // ai-analyzer/ is already git-excluded.
+  cacheDir: 'ai-analyzer/.vite',
+  plugins: [aiAnalyzerStatic({})],
+  server: { hmr, allowedHosts: true },
+};
+`;
+
 // The webpack loader body shared by the ESM and CJS Next wrappers: prepend an
 // enforce:'pre' rule that stamps data-cms-src on .jsx/.tsx before Next's SWC.
 const NEXT_WEBPACK_BODY = `const loaderPath = join(process.cwd(), 'ai-analyzer', 'next-tagger-loader.cjs');
@@ -200,6 +221,18 @@ export const injectAnalyzer = (dir: string, appDir: string): BootPlan | null => 
       ensureGitExclude(dir, `${rel}/ai-analyzer/`);
     }
   };
+
+  if (framework === 'static') {
+    writeFileSync(
+      join(destDir, 'preview.static.config.mjs'),
+      staticWrapper()
+    );
+    exclude();
+    return {
+      framework: 'static',
+      configPath: 'ai-analyzer/preview.static.config.mjs',
+    };
+  }
 
   if (framework === 'astro') {
     const configName = findAstroConfig(appDir);

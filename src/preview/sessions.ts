@@ -284,8 +284,13 @@ export const startSession = async (row: SessionRow) => {
     });
 
     const appDir = findAppDir(dir, await getAppDir(row.repoId));
-    await setStatus(row.id, 'installing');
-    await installDeps(appDir);
+    // Static repos (no package.json) skip the install entirely — nothing to
+    // install, and `npm install` in a package-json-less dir would walk UP to a
+    // parent package.json and install the wrong thing.
+    if (existsSync(join(appDir, 'package.json'))) {
+      await setStatus(row.id, 'installing');
+      await installDeps(appDir);
+    }
     // npm leaves artifacts behind (lockfile updates, a fresh package-lock in
     // repos that lack one). Reset so the tree equals the branch before any
     // edit — otherwise every message's changed-files check would see the

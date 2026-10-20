@@ -8,14 +8,17 @@ import { join } from 'path';
  *    Vite plugin stamps `data-cms-src`, booted via a `--config` wrapper.
  *  - Next — its own compiler; the tagger rides a webpack loader through a
  *    programmatic dev server (see ai-analyzer/preview-next-server.mjs).
+ *  - Static — a plain HTML/CSS/JS repo with no package.json at all, served by
+ *    the PILOT's own Vite (no install step; the clone has no node_modules).
  * Anything unrecognized returns null and boots plainly with no tagging.
  */
-export type Framework = 'astro' | 'next' | 'vite';
+export type Framework = 'astro' | 'next' | 'vite' | 'static';
 
 export type BootPlan =
   | { framework: 'astro'; configPath: string; extraEnv?: Record<string, string> }
   | { framework: 'vite'; configPath: string; extraEnv?: Record<string, string> }
-  | { framework: 'next'; extraEnv?: Record<string, string> };
+  | { framework: 'next'; extraEnv?: Record<string, string> }
+  | { framework: 'static'; configPath: string; extraEnv?: Record<string, string> };
 
 const ASTRO_CONFIGS = [
   'astro.config.mjs',
@@ -75,6 +78,14 @@ const readDeps = (appDir: string): Record<string, string> => {
  * Vite bucket catches everything else that runs on Vite.
  */
 export const detectFramework = (appDir: string): Framework | null => {
+  // Static comes FIRST: a repo without a package.json has no installable deps,
+  // so a stray vite/astro config file must not route it to a framework path
+  // (those spawn from the clone's node_modules, which doesn't exist).
+  if (
+    !existsSync(join(appDir, 'package.json')) &&
+    existsSync(join(appDir, 'index.html'))
+  )
+    return 'static';
   const deps = readDeps(appDir);
   if (findAstroConfig(appDir) || deps.astro) return 'astro';
   if (findNextConfig(appDir) || deps.next) return 'next';

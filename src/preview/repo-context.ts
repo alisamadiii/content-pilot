@@ -162,7 +162,20 @@ export const collectRoutes = async (
     return routes;
   }
 
-  // Vite / static / unknown: a single index.html (or src/index.html).
+  if (framework === 'static') {
+    // Plain multi-page sites: every .html file is a page. toRoute collapses
+    // /index, so index.html → /, about.html → /about, about/index.html → /about
+    // (first add wins when both shapes exist).
+    const files: string[] = [];
+    await walkFiles(appDir, appDir, 0, files, 1000);
+    for (const file of files) {
+      if (!file.endsWith('.html')) continue;
+      add(toRoute(stripExt(file).split('/')), file);
+    }
+    return routes;
+  }
+
+  // Vite / unknown: a single index.html (or src/index.html).
   for (const candidate of ['index.html', 'src/index.html']) {
     if (await exists(join(appDir, candidate))) {
       add('/', candidate);
@@ -177,7 +190,14 @@ export const resolvePageFile = (
   routes: Map<string, string>,
   pagePath: string
 ): string | null => {
-  const path = pagePath.replace(/\/+$/, '') || '/';
+  // Static sites navigate by file URL (the overlay posts location.pathname
+  // verbatim): /about.html, /about/, /about/index.html all mean the /about
+  // route. Safe for astro/next too — their route keys never end in .html.
+  const path =
+    pagePath
+      .replace(/\/+$/, '')
+      .replace(/\/index\.html$/, '')
+      .replace(/\.html$/, '') || '/';
   const exact = routes.get(path);
   if (exact) return exact;
   for (const [route, file] of routes) {
@@ -285,7 +305,9 @@ const listCmsFiles = async (dir: string) => {
 const renderText = (ctx: Omit<RepoContext, 'text'>) => {
   const lines: string[] = ['# This site'];
   lines.push(
-    `Framework: ${ctx.framework ?? 'static'}. Public folder for images: \`${ctx.publicRel}/\` (served at \`/\`).`
+    ctx.publicRel
+      ? `Framework: ${ctx.framework ?? 'unknown'}. Public folder for images: \`${ctx.publicRel}/\` (served at \`/\`).`
+      : `Framework: ${ctx.framework ?? 'unknown'}. Images live at the repo root (a file at \`images/x.webp\` is served at \`/images/x.webp\`).`
   );
   if (ctx.routes.size) {
     lines.push('Pages and the file that renders each one:');
@@ -328,7 +350,12 @@ export const buildRepoContext = async (
   appDir: string
 ): Promise<RepoContext> => {
   const framework = detectFramework(appDir);
-  const publicRel = publicRelFor(dir, appDir);
+  // Static sites have no public/ convention — assets are served straight from
+  // the app dir ('' for root apps), so images land next to the pages.
+  const publicRel =
+    framework === 'static'
+      ? toPosix(relative(dir, appDir))
+      : publicRelFor(dir, appDir);
   const [routes, components, cmsFiles, imageDirs, agentNotes] = await Promise.all([
     collectRoutes(dir, appDir, framework),
     listComponents(dir, appDir),

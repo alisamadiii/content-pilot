@@ -41,9 +41,21 @@ export const listImageDirHints = async (
       }
     }
   };
-  const srcRel = publicRel.replace(/public$/, 'src');
-  await walk(join(appDir, 'public'), publicRel, 0);
-  await walk(join(appDir, 'src'), srcRel, 0);
+  if (publicRel.endsWith('public')) {
+    const srcRel = publicRel.replace(/public$/, 'src');
+    await walk(join(appDir, 'public'), publicRel, 0);
+    await walk(join(appDir, 'src'), srcRel, 0);
+  } else {
+    // Static repos serve from the app dir itself ('' for root apps): walk the
+    // conventional root image folders instead of a public/ that doesn't exist.
+    for (const name of ['images', 'img', 'assets', 'uploads', 'media']) {
+      await walk(
+        join(appDir, name),
+        publicRel ? `${publicRel}/${name}` : name,
+        0
+      );
+    }
+  }
   return [...counts.entries()]
     .map(([dir, count]) => ({ dir, count }))
     .sort((a, b) => b.count - a.count || a.dir.localeCompare(b.dir))
@@ -98,10 +110,13 @@ export const chooseImageDir = (
   publicRel: string
 ): string => {
   const wanted = words(description);
+  // '' publicRel (static root repos): every hint qualifies and paths keep no
+  // leading slash. Non-empty behavior is byte-identical to before.
+  const prefix = publicRel ? `${publicRel}/` : '';
   let best: { dir: string; count: number } | null = null;
   for (const hint of hints) {
-    if (!hint.dir.startsWith(`${publicRel}/`)) continue;
-    const segments = hint.dir.slice(publicRel.length + 1).split('/');
+    if (prefix && !hint.dir.startsWith(prefix)) continue;
+    const segments = hint.dir.slice(prefix.length).split('/');
     const last = segments[segments.length - 1];
     if (last === 'images' || last === 'img' || last === 'assets') continue;
     const hit = wanted.some((word) =>
@@ -111,5 +126,5 @@ export const chooseImageDir = (
     );
     if (hit && (!best || hint.count > best.count)) best = hint;
   }
-  return best?.dir ?? `${publicRel}/images/uploads`;
+  return best?.dir ?? `${prefix}images/uploads`;
 };

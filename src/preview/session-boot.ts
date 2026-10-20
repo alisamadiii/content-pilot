@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
+import { createRequire } from 'module';
 import { join } from 'path';
 import { previewUrlFor } from './config';
 import type { BootPlan } from './framework';
@@ -22,20 +23,25 @@ export class AppDirConfigError extends Error {}
 // admin/). We never guess which subfolder is the site — a wrong guess would run
 // and even publish the wrong project. The site folder is either the repo root
 // (single-app repos, the common case) or an explicit admin-set app folder;
-// anything else stops here with a config error the admin must resolve.
+// anything else stops here with a config error the admin must resolve. A folder
+// qualifies with a package.json (framework repos) OR an index.html (plain
+// static repos with no toolchain at all).
+const isSiteDir = (dir: string) =>
+  existsSync(join(dir, 'package.json')) || existsSync(join(dir, 'index.html'));
+
 export const findAppDir = (dir: string, override?: string | null) => {
   if (override) {
     const app = join(dir, override);
-    if (!existsSync(join(app, 'package.json'))) {
+    if (!isSiteDir(app)) {
       throw new AppDirConfigError(
-        `The configured app folder "${override}" has no package.json — an admin needs to fix the app folder for this project.`
+        `The configured app folder "${override}" has no package.json or index.html — an admin needs to fix the app folder for this project.`
       );
     }
     return app;
   }
-  if (existsSync(join(dir, 'package.json'))) return dir;
+  if (isSiteDir(dir)) return dir;
   throw new AppDirConfigError(
-    'This project keeps its site in a subfolder, so an admin needs to set its app folder before it can be previewed.'
+    'No package.json or index.html at the repo root — if the site lives in a subfolder, an admin needs to set its app folder before it can be previewed.'
   );
 };
 
@@ -104,6 +110,21 @@ export const publicEndpoint = () => {
   return { protocol, port };
 };
 
+/**
+ * Vite's CLI bin resolved from the PILOT's own install (cwd is the content-pilot
+ * repo root, /app in the container). Static clones have no node_modules, so
+ * `npx vite` with cwd=clone can never resolve — the spawn needs this absolute
+ * path, run with the pilot's own node (process.execPath).
+ */
+export const pilotViteBin = () => {
+  // vite's exports map hides ./bin/vite.js from resolve(), so locate the
+  // package root via its (exported) package.json and join the bin path.
+  const pkg = createRequire(join(process.cwd(), 'package.json')).resolve(
+    'vite/package.json'
+  );
+  return join(pkg, '..', 'bin', 'vite.js');
+};
+
 export const hasDevScript = (dir: string) => {
   try {
     const pkg = JSON.parse(
@@ -157,6 +178,25 @@ export const devCommand = (
       args: [
         'vite',
         'dev',
+        '--config',
+        boot.configPath,
+        '--port',
+        p,
+        '--host',
+        '127.0.0.1',
+      ],
+      env: extraEnv,
+    };
+  }
+
+  if (boot?.framework === 'static') {
+    // Plain HTML/CSS/JS repo: serve it with the pilot's OWN Vite against the
+    // clone dir (spawnDevServer sets cwd=appDir, Vite's root defaults to cwd).
+    // No install ever runs in the clone, so the server is up in seconds.
+    return {
+      cmd: process.execPath,
+      args: [
+        pilotViteBin(),
         '--config',
         boot.configPath,
         '--port',
