@@ -9,7 +9,6 @@ import { join } from 'path';
 // by worker/config at import, so it's pinned before the dynamic import.
 const ws = mkdtempSync(join(tmpdir(), 'cp-git-'));
 process.env.WORKSPACE_DIR = ws;
-process.env.GITHUB_PAT = 'ghp_supersecret123';
 process.env.GIT_AUTHOR_NAME = 'Test Bot';
 process.env.GIT_AUTHOR_EMAIL = 'bot@test.local';
 process.env.GIT_CONFIG_GLOBAL = '/dev/null';
@@ -49,10 +48,13 @@ before(async () => {
 
 // ------------------------------------------------------------------ pure
 
-test('sanitize redacts the PAT and any basic auth header, leaves the rest', async () => {
+// STALE ASSERTION UPDATED (deliberate behavior change, GitHub App cutover
+// 2026-10-20): the global PAT no longer exists, so sanitize no longer redacts
+// a PAT substring — minted installation tokens + Basic headers remain covered.
+test('sanitize redacts any basic auth header, leaves the rest', async () => {
   assert.equal(
-    g.sanitize('fatal: https://x-access-token:ghp_supersecret123@github.com/a/b.git failed; Authorization: Basic abc+/= done'),
-    'fatal: https://x-access-token:[REDACTED]@github.com/a/b.git failed; Authorization: [REDACTED] done'
+    g.sanitize('fatal: push failed; Authorization: Basic abc+/= done'),
+    'fatal: push failed; Authorization: [REDACTED] done'
   );
   assert.equal(g.sanitize('clean message'), 'clean message');
 });
@@ -94,9 +96,12 @@ test('discardChanges restores tracked files and removes untracked ones', async (
   assert.equal(existsSync(join(work, 'b new.txt')), false);
 });
 
+// STALE ASSERTION UPDATED (deliberate behavior change, GitHub App cutover
+// 2026-10-20): the second assertion checked that a global-PAT substring was
+// scrubbed from git error text; the PAT no longer exists. Error passthrough
+// still asserted; token redaction is covered by the sanitize tests.
 test('git() rejects with a sanitized message on failure', async () => {
   await assert.rejects(g.git(work, ['rev-parse', 'does-not-exist-ref']), /does-not-exist-ref/);
-  await assert.rejects(g.git(work, ['checkout', 'ghp_supersecret123']), (e: Error) => !e.message.includes('ghp_supersecret123'));
 });
 
 // ------------------------------------------------------------- commit/push

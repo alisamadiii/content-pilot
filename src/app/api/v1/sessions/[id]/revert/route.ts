@@ -74,6 +74,10 @@ export const POST = async (
     dir,
     branch: session.branch,
     message: `Reverted ${touched.length === 1 ? touched[0] : `${touched.length} files`} to the live site`,
+    author:
+      session.commitAuthorName && session.commitAuthorEmail
+        ? { name: session.commitAuthorName, email: session.commitAuthorEmail }
+        : null,
   });
   return Response.json(
     { commitSha: sha, restored: result.restored, removed: result.removed, skipped: result.skipped },

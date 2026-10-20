@@ -28,7 +28,8 @@ services:
       DATABASE_URL: postgres://postgres:postgres@db:5432/content_pilot
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-me}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3010}
-      GITHUB_PAT: ${GITHUB_PAT}
+      GITHUB_APP_ID: ${GITHUB_APP_ID}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY}
       WORKSPACE_DIR: /data/workspace
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}

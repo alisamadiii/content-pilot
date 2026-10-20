@@ -727,6 +727,13 @@ const processMessage = async (row: MessageRow) => {
         dir: session.dir,
         branch: sessionRow.branch,
         message: `AI session edit: ${commitTitle(row.content)}`,
+        author:
+          sessionRow.commitAuthorName && sessionRow.commitAuthorEmail
+            ? {
+                name: sessionRow.commitAuthorName,
+                email: sessionRow.commitAuthorEmail,
+              }
+            : null,
       });
       await emitEvent(row.sessionId, 'commit', { sha, files: changed }, row.id);
     }

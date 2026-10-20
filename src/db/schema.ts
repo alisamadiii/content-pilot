@@ -160,6 +160,12 @@ export const previewSession = pgTable(
     // Client-facing error when status = failed
     error: text('error'),
     requestedBy: text('requested_by'),
+    // Commit identity for this session's pushes. The hub passes the project
+    // owner's GitHub login + noreply email (derived from the App installation)
+    // so services like Netlify that license git contributors see a known
+    // collaborator, not our bot. Null → the GIT_AUTHOR_* env fallback.
+    commitAuthorName: text('commit_author_name'),
+    commitAuthorEmail: text('commit_author_email'),
     lastActivityAt: timestamp('last_activity_at').notNull().defaultNow(),
     // Set when the idle sweep emits a warning; cleared (via a fresh
     // lastActivityAt) on the next user message. Guards the ~60s sweep against

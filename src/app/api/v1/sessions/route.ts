@@ -5,7 +5,7 @@ import {
   PREVIEW_SESSION_LIVE_STATUSES,
   previewSession,
 } from '@/db/schema';
-import { resolveRepo } from '@/lib/resolve-repo';
+import { resolveRepo, seedRepo } from '@/lib/resolve-repo';
 import { getGeminiTier, getMaxSessions, getProvider } from '@/lib/settings';
 import {
   authenticateSessionRequest,
@@ -25,6 +25,19 @@ const createSchema = z.object({
    * Omitted = the default-branch preview on an ephemeral `preview/<id>`.
    */
   branch: z.string().trim().min(1).max(100).optional(),
+  /**
+   * Optional slug hint from the hub (it already knows both). Seeds the
+   * repoId→slug cache so the GitHub App path needs no PAT and no API lookup.
+   */
+  owner: z.string().trim().min(1).max(100).optional(),
+  repo: z.string().trim().min(1).max(200).optional(),
+  /**
+   * Commit identity for this session's pushes (the project owner's GitHub
+   * login + noreply email, derived from the App installation by the hub).
+   * Omitted → the GIT_AUTHOR_* env fallback (the app bot).
+   */
+  commitAuthorName: z.string().trim().min(1).max(200).optional(),
+  commitAuthorEmail: z.string().trim().min(1).max(320).optional(),
 });
 
 /** Two sessions are "the same branch" when both are named-and-equal, or both are default previews. */
@@ -137,6 +150,9 @@ export const POST = async (request: Request) => {
     return Response.json(publicSession(revived), { status: 200, headers });
   }
 
+  if (input.owner && input.repo) {
+    seedRepo(input.repoId, { owner: input.owner, repo: input.repo });
+  }
   const resolved = await resolveRepo(input.repoId);
   if (!resolved) {
     return Response.json(
@@ -160,6 +176,8 @@ export const POST = async (request: Request) => {
       status: 'starting',
       provider,
       requestedBy: input.requestedBy,
+      commitAuthorName: input.commitAuthorName,
+      commitAuthorEmail: input.commitAuthorEmail,
     })
     .returning();
 

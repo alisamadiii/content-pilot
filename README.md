@@ -14,7 +14,7 @@ Self-hosted AI website editor. A client opens a **live preview session** for the
 
 - Postgres
 - `git` and access to the AI provider (Claude Agent SDK via API key, or the Gemini CLI) available to the supervisor
-- A GitHub fine-grained PAT with Contents read/write on the target repos
+- A GitHub App (Contents read/write) installed on the target repos — set `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY`
 
 ## Local development
 
@@ -23,7 +23,7 @@ Previews need TWO processes running side by side — the web app and the preview
 ```sh
 pnpm install
 docker compose up -d db          # Postgres on :5433
-cp .env.example .env             # fill GITHUB_PAT, BETTER_AUTH_SECRET, provider keys
+cp .env.example .env             # fill GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY, BETTER_AUTH_SECRET, provider keys (app creds optional locally — git falls back to your credential helper)
 pnpm db:migrate                  # create / update tables from drizzle/
 pnpm dev                         # dashboard on http://localhost:3010
 pnpm preview                     # preview supervisor (separate terminal) — REQUIRED, or sessions hang at "starting"
@@ -42,7 +42,7 @@ ghcr.io/<owner>/content-pilot:latest
 ```
 
 1. Create a Postgres resource and a new service from the image above.
-2. Set env vars: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` (public URL), `GITHUB_PAT`, `EDIT_TOKEN_SECRET` (shared with the hub), and the provider keys.
+2. Set env vars: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` (public URL), `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY` (base64 PEM), `EDIT_TOKEN_SECRET` (shared with the hub), and the provider keys.
 3. Attach two persistent volumes:
    - `/data/workspace` — repo clones, plus the Gemini CLI home (`.gemini-home`), per-session Gemini system prompts (`.cp-prompts`) and staged uploads (`.uploads`)
    - `/home/nextjs/.claude` — provider auth

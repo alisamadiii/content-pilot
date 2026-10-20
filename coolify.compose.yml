@@ -11,7 +11,8 @@ services:
       # (service name has a dash → slug mismatch), leaving better-auth with an
       # unresolved origin. The bare SERVICE_FQDN line above still drives routing.
       - BETTER_AUTH_URL=https://pilot.alisamadii.com
-      - GITHUB_PAT=${GITHUB_PAT}
+      - GITHUB_APP_ID=${GITHUB_APP_ID}
+      - GITHUB_APP_PRIVATE_KEY=${GITHUB_APP_PRIVATE_KEY}
       - WORKSPACE_DIR=/data/workspace
       - POLL_INTERVAL_MS=300000
       - JOB_TIMEOUT_MS=600000

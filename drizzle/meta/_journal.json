@@ -15,6 +15,13 @@
       "when": 1792279397011,
       "tag": "0001_preview_message_cache_read_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792496894606,
+      "tag": "0002_curly_bedlam",
+      "breakpoints": true
     }
   ]
 }

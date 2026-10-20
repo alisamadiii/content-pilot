@@ -95,8 +95,12 @@ const SettingsPage = async () => {
               <td>{process.env.WORKSPACE_DIR || './workspace'}</td>
             </tr>
             <tr>
-              <td className="muted">github pat</td>
-              <td>{process.env.GITHUB_PAT ? 'configured' : 'MISSING'}</td>
+              <td className="muted">github app</td>
+              <td>
+                {process.env.GITHUB_APP_ID && process.env.GITHUB_APP_PRIVATE_KEY
+                  ? `configured (app ${process.env.GITHUB_APP_ID})`
+                  : 'MISSING (required)'}
+              </td>
             </tr>
           </tbody>
         </table>

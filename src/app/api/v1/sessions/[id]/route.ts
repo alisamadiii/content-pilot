@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { client, db } from '@/db';
 import { previewAttachment, previewMessage, previewSession } from '@/db/schema';
@@ -8,6 +8,7 @@ import {
 } from '@/lib/session-auth';
 import { removeSessionUploads } from '@/lib/uploads';
 import { previewConfig, previewUrlFor } from '@/preview/config';
+import { squashIntoDefault, syncRepo } from '@/worker/git';
 
 const actionSchema = z.discriminatedUnion('action', [
   z.object({
@@ -18,6 +19,9 @@ const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('reset') }),
   // Pause: abort the in-flight AI run, keep the session live.
   z.object({ action: z.literal('cancel') }),
+  // Publish: squash the session branch into the default branch as one commit
+  // authored by the project owner, and push. The hub closes the session after.
+  z.object({ action: z.literal('publish') }),
 ]);
 
 const loadAuthorized = async (request: Request, id: string) => {
@@ -128,6 +132,59 @@ export const POST = async (
   const parsed = actionSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return Response.json({ error: 'Invalid body' }, { status: 400, headers });
+  }
+
+  if (parsed.data.action === 'publish') {
+    const row = result.row;
+    // Never squash mid-edit — the working tree belongs to the in-flight run.
+    const [inFlight] = await db
+      .select({ id: previewMessage.id })
+      .from(previewMessage)
+      .where(
+        and(
+          eq(previewMessage.sessionId, id),
+          inArray(previewMessage.status, ['queued', 'running'])
+        )
+      )
+      .limit(1);
+    if (inFlight) {
+      return Response.json(
+        { error: 'The AI is still working on a request. Wait for it to finish, then publish.' },
+        { status: 409, headers }
+      );
+    }
+    try {
+      // syncRepo re-clones if the workspace was cleaned and resets the branch
+      // to its pushed state (every applied edit is already committed+pushed).
+      const dir = await syncRepo({
+        repoId: row.repoId,
+        owner: row.owner,
+        repo: row.repo,
+        branch: row.branch,
+      });
+      const squash = await squashIntoDefault({
+        dir,
+        branch: row.branch,
+        message: `Publish site edits (session ${row.id})`,
+        author:
+          row.commitAuthorName && row.commitAuthorEmail
+            ? { name: row.commitAuthorName, email: row.commitAuthorEmail }
+            : null,
+      });
+      if (squash.conflict) {
+        return Response.json(
+          { error: 'merge_conflict' },
+          { status: 409, headers }
+        );
+      }
+      return Response.json(
+        { id, sha: squash.sha, changed: squash.changed },
+        { status: 200, headers }
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'publish failed';
+      return Response.json({ error: message }, { status: 500, headers });
+    }
   }
 
   // The API only writes intent; the supervisor acts on its next reconcile pass.
