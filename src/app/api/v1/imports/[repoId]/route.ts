@@ -2,13 +2,14 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { existsSync } from 'fs';
 import { rm } from 'fs/promises';
 import { join, resolve, sep } from 'path';
-import { db } from '@/db';
+import { client, db } from '@/db';
 import {
   previewSession,
   PREVIEW_SESSION_LIVE_STATUSES,
 } from '@/db/schema';
 import { verifyApiKey } from '@/lib/api-key';
 import { extractCredentials } from '@/lib/request-credentials';
+import { listDomainsForRepo, removeAllDomainsForRepo } from '@/lib/settings';
 import { config } from '@/worker/config';
 import { repoDir } from '@/worker/git';
 import {
@@ -60,7 +61,8 @@ export const GET = async (
     }
   }
   const liveUrl = exists && isLiveServable(repoId) ? liveUrlFor(repoId) : null;
-  return Response.json({ exists, framework, liveUrl });
+  const domains = exists ? await listDomainsForRepo(repoId) : [];
+  return Response.json({ exists, framework, liveUrl, domains });
 };
 
 export const DELETE = async (
@@ -102,5 +104,12 @@ export const DELETE = async (
     await rm(target, { recursive: true, force: true });
   }
   await removeLiveSnapshot(repoId);
+  // The live site's domains die with the project.
+  await removeAllDomainsForRepo(repoId);
+  try {
+    await client.notify('cp_domains', '');
+  } catch {
+    // The supervisor also refreshes on an interval.
+  }
   return Response.json({ deleted: true });
 };

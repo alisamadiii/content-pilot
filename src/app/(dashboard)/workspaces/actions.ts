@@ -6,13 +6,19 @@ import { rm } from 'fs/promises';
 import { join, resolve, sep } from 'path';
 import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
-import { db } from '@/db';
+import { client, db } from '@/db';
 import {
   previewSession,
   PREVIEW_SESSION_LIVE_STATUSES,
 } from '@/db/schema';
 import { auth } from '@/lib/auth';
-import { appDirKey, geminiTierKey, providerKey, setSetting } from '@/lib/settings';
+import {
+  appDirKey,
+  geminiTierKey,
+  providerKey,
+  removeAllDomainsForRepo,
+  setSetting,
+} from '@/lib/settings';
 import {
   normalizeGeminiTier,
   normalizeProvider,
@@ -67,8 +73,15 @@ export const deleteRepoClone = async (repoId: number) => {
   if (existsSync(target)) {
     await rm(target, { recursive: true, force: true });
   }
-  // Upload projects also serve a live snapshot — take it down with the clone.
+  // Upload projects also serve a live snapshot — take it down with the clone,
+  // along with any domain mappings pointing at it.
   await removeLiveSnapshot(repoId);
+  await removeAllDomainsForRepo(repoId);
+  try {
+    await client.notify('cp_domains', '');
+  } catch {
+    // The supervisor also refreshes on an interval.
+  }
   revalidatePath('/workspaces');
 };
 

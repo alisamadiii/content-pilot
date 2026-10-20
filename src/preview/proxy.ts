@@ -62,6 +62,10 @@ export const sessionIdFromHost = (host: string | undefined) => {
   return label;
 };
 
+/** Full Host header normalized for the domain map: lowercase, no port/dot. */
+export const normalizedHost = (host: string | undefined) =>
+  (host || '').split(':')[0]?.toLowerCase().replace(/\.$/, '') || '';
+
 const endedPage = `<!doctype html><meta charset="utf-8"><title>Preview ended</title>
 <body style="font-family:system-ui;display:grid;place-items:center;min-height:100vh;margin:0">
 <div style="text-align:center"><h1 style="font-size:1.25rem">This preview session has ended</h1>
@@ -93,23 +97,43 @@ const liveServerFor = (repoId: number) => {
   return server;
 };
 
-/** Handles a live-site request; true when the label matched one. */
-const serveLive = (req: IncomingMessage, res: ServerResponse, label: string) => {
-  const repoId = repoIdFromLiveLabel(label);
-  if (repoId === null) return false;
+/** Serves a live-site request for a known repoId (snapshot or 404 page). */
+const serveLiveRepo = (
+  req: IncomingMessage,
+  res: ServerResponse,
+  repoId: number
+) => {
   if (!existsSync(liveServeRoot(repoId))) {
     res.writeHead(404, {
       'Content-Type': 'text/html',
       'cache-control': 'no-store',
     });
     res.end(unpublishedPage);
-    return true;
+    return;
   }
   liveServerFor(repoId)(req, res, finalhandler(req, res));
+};
+
+/** Handles a `site-<id>` live-site request; true when the label matched one. */
+const serveLive = (req: IncomingMessage, res: ServerResponse, label: string) => {
+  const repoId = repoIdFromLiveLabel(label);
+  if (repoId === null) return false;
+  serveLiveRepo(req, res, repoId);
   return true;
 };
 
-export const startProxy = (port: number = previewConfig.proxyPort) => {
+export const startProxy = (
+  port: number = previewConfig.proxyPort,
+  options: {
+    /**
+     * Custom-domain map (host -> repoId) for uploaded projects. Checked on the
+     * FULL normalized host before any session-label routing, so a mapped host
+     * can only ever serve its own published snapshot — never a session.
+     */
+    resolveDomain?: (host: string) => number | null;
+  } = {}
+) => {
+  const resolveDomain = options.resolveDomain ?? (() => null);
   const proxy = httpProxy.createProxyServer({
     ws: true,
     changeOrigin: true,
@@ -176,6 +200,13 @@ export const startProxy = (port: number = previewConfig.proxyPort) => {
   });
 
   const server = createServer((req, res) => {
+    // Custom domains first, on the full host — never falls through to session
+    // routing (a visitor spoofing a mapped Host must not reach a session).
+    const mapped = resolveDomain(normalizedHost(req.headers.host));
+    if (mapped !== null) {
+      serveLiveRepo(req, res, mapped);
+      return;
+    }
     const id = sessionIdFromHost(req.headers.host);
     if (serveLive(req, res, id)) return;
     const port = routes.get(id);
@@ -188,6 +219,11 @@ export const startProxy = (port: number = previewConfig.proxyPort) => {
   });
 
   server.on('upgrade', (req, socket, head) => {
+    if (resolveDomain(normalizedHost(req.headers.host)) !== null) {
+      // Mapped domains serve static files — no WebSocket.
+      socket.destroy();
+      return;
+    }
     const id = sessionIdFromHost(req.headers.host);
     if (repoIdFromLiveLabel(id) !== null) {
       // Live sites are static files — no WebSocket to speak of.

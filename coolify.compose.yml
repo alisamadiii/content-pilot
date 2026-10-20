@@ -56,6 +56,22 @@ services:
       - traefik.http.routers.cp-preview-https.tls=true
       - traefik.http.routers.cp-preview-https.service=cp-preview
       - traefik.http.services.cp-preview.loadbalancer.server.port=3020
+      # Custom domains (uploaded projects): Cloudflare for SaaS proxies the
+      # customer's hostname to the fallback origin with the ORIGINAL Host
+      # header, so these catch-alls hand any unrecognized host to the preview
+      # proxy, which resolves host -> repoId from its domain map or 404s.
+      # Priority 1 loses to every explicit router above and to other Coolify
+      # apps. The https router serves Traefik's default cert, so the zone's
+      # SSL mode must be Full (not Full strict) for custom hostnames.
+      - 'traefik.http.routers.cp-domains-http.rule=HostRegexp(`^.+$`)'
+      - traefik.http.routers.cp-domains-http.entryPoints=http
+      - traefik.http.routers.cp-domains-http.priority=1
+      - traefik.http.routers.cp-domains-http.service=cp-preview
+      - 'traefik.http.routers.cp-domains-https.rule=HostRegexp(`^.+$`)'
+      - traefik.http.routers.cp-domains-https.entryPoints=https
+      - traefik.http.routers.cp-domains-https.tls=true
+      - traefik.http.routers.cp-domains-https.priority=1
+      - traefik.http.routers.cp-domains-https.service=cp-preview
     depends_on:
       postgres:
         condition: service_healthy

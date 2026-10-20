@@ -13,12 +13,14 @@ import {
 export const dynamic = 'force-dynamic';
 
 const ReposPage = async () => {
-  const [rows, appDirRows, providerRows, tierRows] = await Promise.all([
-    listWorkspaces(),
-    db.select().from(appSetting).where(like(appSetting.key, 'app_dir:%')),
-    db.select().from(appSetting).where(like(appSetting.key, 'ai_provider:%')),
-    db.select().from(appSetting).where(like(appSetting.key, 'gemini_tier:%')),
-  ]);
+  const [rows, appDirRows, providerRows, tierRows, domainRows] =
+    await Promise.all([
+      listWorkspaces(),
+      db.select().from(appSetting).where(like(appSetting.key, 'app_dir:%')),
+      db.select().from(appSetting).where(like(appSetting.key, 'ai_provider:%')),
+      db.select().from(appSetting).where(like(appSetting.key, 'gemini_tier:%')),
+      db.select().from(appSetting).where(like(appSetting.key, 'domain:%')),
+    ]);
   const appDirs = new Map(
     appDirRows.map((r) => [Number(r.key.slice('app_dir:'.length)), r.value])
   );
@@ -36,6 +38,15 @@ const ReposPage = async () => {
       r.value === 'paid' ? 'paid' : 'free',
     ])
   );
+  // Upload-project domain mappings, grouped per repoId (read-only here; the
+  // hub writes them).
+  const domains = new Map<number, string[]>();
+  for (const r of domainRows) {
+    const repoId = Number(r.value);
+    const host = r.key.slice('domain:'.length);
+    if (!Number.isSafeInteger(repoId)) continue;
+    domains.set(repoId, [...(domains.get(repoId) ?? []), host]);
+  }
 
   return (
     <>
@@ -55,6 +66,7 @@ const ReposPage = async () => {
               <th>repository</th>
               <th>branch</th>
               <th>app folder</th>
+              <th>domains</th>
               <th>ai</th>
               <th>gemini key</th>
               <th></th>
@@ -92,6 +104,9 @@ const ReposPage = async () => {
                       repoId={row.repoId}
                       value={appDirs.get(row.repoId) ?? ''}
                     />
+                  </td>
+                  <td className="muted">
+                    {domains.get(row.repoId)?.join(', ') ?? '-'}
                   </td>
                   <td>
                     <ProviderForm

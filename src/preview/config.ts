@@ -4,7 +4,7 @@ import 'dotenv/config';
  * Preview-supervisor configuration. Everything URL-shaped is env-driven so the
  * whole feature runs locally without DNS/TLS:
  *  - local:  PREVIEW_URL_BASE=http://{id}.localhost:3020
- *  - prod:   PREVIEW_URL_BASE=https://{id}.preview.alisamadii.com
+ *  - prod:   PREVIEW_URL_BASE=https://{id}.alisamadii.dev
  * The `{id}` placeholder is replaced with the session id; the proxy routes by
  * the leftmost Host label in both cases.
  */
