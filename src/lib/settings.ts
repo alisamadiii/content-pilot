@@ -1,4 +1,4 @@
-import { and, eq, like } from 'drizzle-orm';
+import { and, eq, inArray, like } from 'drizzle-orm';
 import { db } from '@/db';
 import { appSetting } from '@/db/schema';
 import { domainKey } from './domain-rules';
@@ -124,6 +124,19 @@ export const removeAllDomainsForRepo = async (
     .delete(appSetting)
     .where(
       and(like(appSetting.key, 'domain:%'), eq(appSetting.value, String(repoId)))
+    );
+};
+
+/** Removes a repo's per-project settings overrides (project delete). */
+export const removeRepoSettings = async (repoId: number): Promise<void> => {
+  await db
+    .delete(appSetting)
+    .where(
+      inArray(appSetting.key, [
+        appDirKey(repoId),
+        providerKey(repoId),
+        geminiTierKey(repoId),
+      ])
     );
 };
 

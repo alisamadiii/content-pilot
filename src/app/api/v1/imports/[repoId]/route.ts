@@ -1,15 +1,23 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { existsSync } from 'fs';
 import { rm } from 'fs/promises';
 import { join, resolve, sep } from 'path';
 import { client, db } from '@/db';
 import {
+  previewAttachment,
+  previewEvent,
+  previewMessage,
   previewSession,
   PREVIEW_SESSION_LIVE_STATUSES,
 } from '@/db/schema';
 import { verifyApiKey } from '@/lib/api-key';
 import { extractCredentials } from '@/lib/request-credentials';
-import { listDomainsForRepo, removeAllDomainsForRepo } from '@/lib/settings';
+import {
+  listDomainsForRepo,
+  removeAllDomainsForRepo,
+  removeRepoSettings,
+} from '@/lib/settings';
+import { removeSessionUploads } from '@/lib/uploads';
 import { config } from '@/worker/config';
 import { repoDir } from '@/worker/git';
 import {
@@ -23,10 +31,14 @@ import { findAppDir } from '@/preview/session-boot';
 export const runtime = 'nodejs';
 
 /**
- * Server-to-server (x-api-key only) management of uploaded workspaces:
+ * Server-to-server (x-api-key only) management of a project's pilot state:
  *  - GET: does the workspace exist (hub's finalizeUpload verification)?
- *  - DELETE: remove workspace + live snapshot when the hub deletes the
- *    project — an upload project's live site must go down with its row.
+ *  - DELETE: tear down EVERYTHING the pilot holds for the repo when the hub
+ *    deletes the project — workspace clone, live snapshot, domain mappings,
+ *    all preview sessions (+ their transcripts/events/attachments/staged
+ *    uploads), and the per-repo settings overrides. Any live editing session
+ *    is auto-closed (its dev server killed by pid), so delete never 409s.
+ *    Runs for GitHub and upload projects alike.
  */
 
 const authenticate = async (request: Request) => {
@@ -77,21 +89,38 @@ export const DELETE = async (
     return Response.json({ error: 'Invalid repoId' }, { status: 400 });
   }
 
-  const [liveSession] = await db
-    .select({ id: previewSession.id })
+  // Every session for the repo. Live ones get their dev server killed by pid
+  // (supervisor + this Next app share the container's pid namespace), which
+  // frees the port; then all rows are pruned. No 409 — delete always proceeds.
+  const sessions = await db
+    .select({ id: previewSession.id, pid: previewSession.pid, status: previewSession.status })
     .from(previewSession)
-    .where(
-      and(
-        eq(previewSession.repoId, repoId),
-        inArray(previewSession.status, [...PREVIEW_SESSION_LIVE_STATUSES])
-      )
-    )
-    .limit(1);
-  if (liveSession) {
-    return Response.json(
-      { error: 'A live preview session is using this project.' },
-      { status: 409 }
-    );
+    .where(eq(previewSession.repoId, repoId));
+  const liveStatuses = new Set<string>(PREVIEW_SESSION_LIVE_STATUSES);
+  for (const session of sessions) {
+    if (session.pid && liveStatuses.has(session.status)) {
+      try {
+        process.kill(session.pid, 'SIGTERM');
+      } catch {
+        // Already gone — the port frees itself.
+      }
+    }
+    await removeSessionUploads(session.id);
+  }
+  const sessionIds = sessions.map((s) => s.id);
+  if (sessionIds.length) {
+    await db
+      .delete(previewAttachment)
+      .where(inArray(previewAttachment.sessionId, sessionIds));
+    await db
+      .delete(previewEvent)
+      .where(inArray(previewEvent.sessionId, sessionIds));
+    await db
+      .delete(previewMessage)
+      .where(inArray(previewMessage.sessionId, sessionIds));
+    await db
+      .delete(previewSession)
+      .where(eq(previewSession.repoId, repoId));
   }
 
   // Path safety: same direct-child check as the admin workspaces delete.
@@ -104,9 +133,11 @@ export const DELETE = async (
     await rm(target, { recursive: true, force: true });
   }
   await removeLiveSnapshot(repoId);
-  // The live site's domains die with the project.
+  // The live site's domains + per-repo setting overrides die with the project.
   await removeAllDomainsForRepo(repoId);
+  await removeRepoSettings(repoId);
   try {
+    await client.notify('cp_preview', '');
     await client.notify('cp_domains', '');
   } catch {
     // The supervisor also refreshes on an interval.
