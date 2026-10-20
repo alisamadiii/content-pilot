@@ -210,14 +210,20 @@ test('restoreFiles: restored files are staged so a commit picks them up', async 
   assert.match(status, /^M {2}_collections\/team\.json$/);
 });
 
-test('restoreFiles: restoring without an origin reports a plain error', async () => {
+// DELIBERATE ASSERTION CHANGE (upload-import feature): an origin-less clone is
+// now a supported case — uploaded projects are local-only git repos whose
+// local default branch stands in for origin/<default> (baseRef). Restoring
+// without an origin therefore succeeds against local main instead of failing.
+test('restoreFiles: an origin-less (uploaded) clone restores against local main', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cp-restore-noorigin-'));
   await sh(dir, ['init', '-q', '-b', 'main']);
   await writeFile(join(dir, 'a.txt'), 'x');
   await commit(dir, 'only');
+  await writeFile(join(dir, 'a.txt'), 'edited');
   const result = await restoreFiles({ dir, paths: ['a.txt'] });
-  assert.ok(!result.ok);
-  assert.match(result.error, /live-site version/);
+  assert.ok(result.ok);
+  assert.deepEqual(result.restored, ['a.txt']);
+  assert.equal(await readFile(join(dir, 'a.txt'), 'utf8'), 'x');
 });
 
 // ---------------------------------------------------------------- path hygiene

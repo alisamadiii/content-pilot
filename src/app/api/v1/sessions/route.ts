@@ -5,7 +5,10 @@ import {
   PREVIEW_SESSION_LIVE_STATUSES,
   previewSession,
 } from '@/db/schema';
+import { existsSync } from 'fs';
+import { join } from 'path';
 import { resolveRepo, seedRepo } from '@/lib/resolve-repo';
+import { repoDir } from '@/worker/git';
 import { getGeminiTier, getMaxSessions, getProvider } from '@/lib/settings';
 import {
   authenticateSessionRequest,
@@ -38,6 +41,12 @@ const createSchema = z.object({
    */
   commitAuthorName: z.string().trim().min(1).max(200).optional(),
   commitAuthorEmail: z.string().trim().min(1).max(320).optional(),
+  /**
+   * Workspace source. 'upload' = extracted zip with local-only git (no clone,
+   * no pushes) — the hub passes it for projects it created via importUpload.
+   * Omitted/'github' = today's clone-and-push flow.
+   */
+  source: z.enum(['github', 'upload']).optional(),
 });
 
 /** Two sessions are "the same branch" when both are named-and-equal, or both are default previews. */
@@ -47,6 +56,7 @@ const sameBranch = (existing: string, requested: string | undefined) =>
 const publicSession = (row: typeof previewSession.$inferSelect) => ({
   id: row.id,
   repoId: row.repoId,
+  source: row.source,
   owner: row.owner,
   repo: row.repo,
   status: row.status,
@@ -150,15 +160,38 @@ export const POST = async (request: Request) => {
     return Response.json(publicSession(revived), { status: 200, headers });
   }
 
-  if (input.owner && input.repo) {
-    seedRepo(input.repoId, { owner: input.owner, repo: input.repo });
-  }
-  const resolved = await resolveRepo(input.repoId);
-  if (!resolved) {
-    return Response.json(
-      { error: 'Unknown repository — could not resolve owner/repo from repoId.' },
-      { status: 422, headers }
-    );
+  let resolved: { owner: string; repo: string };
+  if (input.source === 'upload') {
+    // Upload workspaces have no GitHub identity to resolve: the hub's hints
+    // ARE the identity, and the workspace must already exist (imports route).
+    if (!input.owner || !input.repo) {
+      return Response.json(
+        { error: 'owner and repo are required for uploaded projects.' },
+        { status: 400, headers }
+      );
+    }
+    if (!existsSync(join(repoDir(input.repoId), '.git'))) {
+      return Response.json(
+        {
+          error:
+            "This uploaded project's files are missing from the preview server. Re-import the project to continue.",
+        },
+        { status: 422, headers }
+      );
+    }
+    resolved = { owner: input.owner, repo: input.repo };
+  } else {
+    if (input.owner && input.repo) {
+      seedRepo(input.repoId, { owner: input.owner, repo: input.repo });
+    }
+    const viaGithub = await resolveRepo(input.repoId);
+    if (!viaGithub) {
+      return Response.json(
+        { error: 'Unknown repository — could not resolve owner/repo from repoId.' },
+        { status: 422, headers }
+      );
+    }
+    resolved = viaGithub;
   }
 
   const id = newSessionId();
@@ -170,6 +203,7 @@ export const POST = async (request: Request) => {
     .values({
       id,
       repoId: input.repoId,
+      source: input.source ?? 'github',
       owner: resolved.owner,
       repo: resolved.repo,
       branch: input.branch ?? `preview/${id}`,

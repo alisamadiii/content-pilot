@@ -1,7 +1,7 @@
 import { and, eq, isNotNull } from 'drizzle-orm';
 import { db } from '@/db';
 import { previewMessage } from '@/db/schema';
-import { defaultBranch, git } from '../worker/git';
+import { baseRef, git } from '../worker/git';
 
 /**
  * The commits a session may be diffed against: every turn's commit sha, the
@@ -27,8 +27,7 @@ export const loadSessionRevs = async (
   const commits = new Set<string>();
   for (const row of rows) if (row.sha) commits.add(row.sha);
   const head = await git(dir, ['rev-parse', 'HEAD']);
-  const branch = await defaultBranch(dir);
-  const base = await git(dir, ['merge-base', `origin/${branch}`, 'HEAD']).catch(
+  const base = await git(dir, ['merge-base', await baseRef(dir), 'HEAD']).catch(
     () => head
   );
   return { head, base, commits };

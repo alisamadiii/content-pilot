@@ -18,6 +18,7 @@ import {
   normalizeProvider,
   sanitizeAppDir,
 } from '@/lib/settings-rules';
+import { removeLiveSnapshot } from '@/preview/live-serve';
 import { config } from '@/worker/config';
 
 const requireSession = async () => {
@@ -66,6 +67,8 @@ export const deleteRepoClone = async (repoId: number) => {
   if (existsSync(target)) {
     await rm(target, { recursive: true, force: true });
   }
+  // Upload projects also serve a live snapshot — take it down with the clone.
+  await removeLiveSnapshot(repoId);
   revalidatePath('/workspaces');
 };
 

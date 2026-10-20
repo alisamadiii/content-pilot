@@ -1,4 +1,5 @@
 import {
+  bigint,
   boolean,
   doublePrecision,
   index,
@@ -127,7 +128,12 @@ export const previewSession = pgTable(
     // nanoid(12), lowercase — doubles as the preview subdomain label and the
     // suffix of the git branch (preview/<id>).
     id: text('id').primaryKey(),
-    repoId: integer('repo_id').notNull(),
+    // GitHub's numeric repo id for `source: 'github'`; a synthetic id in the
+    // >= 1e12 range for uploaded (no-GitHub) projects — hence bigint.
+    repoId: bigint('repo_id', { mode: 'number' }).notNull(),
+    // Where the workspace comes from: 'github' = cloned + pushed via the App;
+    // 'upload' = extracted from a user-uploaded zip, local-only git (no origin).
+    source: text('source').$type<'github' | 'upload'>().notNull().default('github'),
     // Denormalized like job — the supervisor never needs joins
     owner: text('owner').notNull(),
     repo: text('repo').notNull(),

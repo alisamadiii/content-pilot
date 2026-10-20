@@ -1,8 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import finalhandler from 'finalhandler';
 import httpProxy from 'http-proxy';
+import serveStatic from 'serve-static';
 import { previewConfig } from './config';
+import { liveServeRoot, repoIdFromLiveLabel } from './live-serve';
 
 /**
  * One reverse proxy for every preview session. Routing key is the leftmost
@@ -63,6 +66,48 @@ const endedPage = `<!doctype html><meta charset="utf-8"><title>Preview ended</ti
 <body style="font-family:system-ui;display:grid;place-items:center;min-height:100vh;margin:0">
 <div style="text-align:center"><h1 style="font-size:1.25rem">This preview session has ended</h1>
 <p style="color:#666">Close this tab and start a new editing session from your dashboard.</p></div></body>`;
+
+const unpublishedPage = `<!doctype html><meta charset="utf-8"><title>Not published yet</title>
+<body style="font-family:system-ui;display:grid;place-items:center;min-height:100vh;margin:0">
+<div style="text-align:center"><h1 style="font-size:1.25rem">This site hasn't been published yet</h1>
+<p style="color:#666">Publish it from the editor and it will appear here.</p></div></body>`;
+
+// Live-site serving for uploaded projects: `site-<repoId>` Host labels map to
+// the published snapshot on disk (see live-serve.ts). One serve-static
+// instance per repoId — the root path is constant and files are re-read from
+// disk per request, so publish swaps need no invalidation.
+const liveServers = new Map<number, ReturnType<typeof serveStatic>>();
+
+const liveServerFor = (repoId: number) => {
+  let server = liveServers.get(repoId);
+  if (!server) {
+    server = serveStatic(liveServeRoot(repoId), {
+      dotfiles: 'deny',
+      index: ['index.html'],
+      // Previews and live sites sit behind Cloudflare; published state must
+      // reflect a publish instantly, so nothing may edge-cache.
+      setHeaders: (res) => res.setHeader('cache-control', 'no-store'),
+    });
+    liveServers.set(repoId, server);
+  }
+  return server;
+};
+
+/** Handles a live-site request; true when the label matched one. */
+const serveLive = (req: IncomingMessage, res: ServerResponse, label: string) => {
+  const repoId = repoIdFromLiveLabel(label);
+  if (repoId === null) return false;
+  if (!existsSync(liveServeRoot(repoId))) {
+    res.writeHead(404, {
+      'Content-Type': 'text/html',
+      'cache-control': 'no-store',
+    });
+    res.end(unpublishedPage);
+    return true;
+  }
+  liveServerFor(repoId)(req, res, finalhandler(req, res));
+  return true;
+};
 
 export const startProxy = (port: number = previewConfig.proxyPort) => {
   const proxy = httpProxy.createProxyServer({
@@ -132,6 +177,7 @@ export const startProxy = (port: number = previewConfig.proxyPort) => {
 
   const server = createServer((req, res) => {
     const id = sessionIdFromHost(req.headers.host);
+    if (serveLive(req, res, id)) return;
     const port = routes.get(id);
     if (!port) {
       res.writeHead(404, { 'Content-Type': 'text/html' });
@@ -143,6 +189,11 @@ export const startProxy = (port: number = previewConfig.proxyPort) => {
 
   server.on('upgrade', (req, socket, head) => {
     const id = sessionIdFromHost(req.headers.host);
+    if (repoIdFromLiveLabel(id) !== null) {
+      // Live sites are static files — no WebSocket to speak of.
+      socket.destroy();
+      return;
+    }
     const port = routes.get(id);
     if (!port) {
       socket.destroy();

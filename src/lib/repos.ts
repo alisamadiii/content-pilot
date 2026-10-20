@@ -53,7 +53,8 @@ export const listWorkspaces = async (): Promise<KnownRepo[]> => {
 
     rows.push({
       repoId,
-      owner: slug?.owner ?? '(unknown)',
+      // No parseable origin = an uploaded (local-only) workspace.
+      owner: slug?.owner ?? 'upload',
       repo: slug?.repo ?? name,
       branch,
       cloned: true,

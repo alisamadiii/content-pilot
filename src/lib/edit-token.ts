@@ -54,5 +54,12 @@ export const verifyEditToken = (
     return null;
   }
 
+  // Scoped tokens (e.g. the one-time import token, scope:'import') share the
+  // secret and format but must never authorize edit-session routes. Edit
+  // tokens carry exactly { repoId, exp }.
+  if ('scope' in (payload as unknown as Record<string, unknown>)) {
+    return null;
+  }
+
   return payload;
 };

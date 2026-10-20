@@ -144,6 +144,28 @@ export const ensureGitExclude = (dir: string, pattern: string) => {
   }
 };
 
+/**
+ * Whether the clone has an `origin` remote. Uploaded (no-GitHub) workspaces
+ * are local-only git repos: no origin means every push/fetch is skipped and
+ * the local default branch stands in for `origin/<default>`.
+ */
+export const hasOrigin = async (dir: string) => {
+  try {
+    return Boolean((await git(dir, ['remote', 'get-url', 'origin'])).trim());
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The ref that represents "production" for this clone: `origin/<default>` for
+ * GitHub repos, the local default branch for uploaded (origin-less) ones.
+ */
+export const baseRef = async (dir: string) =>
+  (await hasOrigin(dir))
+    ? `origin/${await defaultBranch(dir)}`
+    : await defaultBranch(dir);
+
 /** The repo's default branch (origin/HEAD), falling back to "main". */
 export const defaultBranch = async (dir: string) => {
   try {
@@ -209,6 +231,40 @@ export const syncRepo = async (params: {
 };
 
 /**
+ * Upload-sourced counterpart of syncRepo: the workspace was created by the
+ * import endpoint (extracted zip + `git init`, local branch `main`, no origin)
+ * and can never be re-cloned, so a missing dir is a hard, client-facing error.
+ * Puts the clone on `branch` (reviving it if it exists, else branching off
+ * main) with a clean tree. Local commits are authoritative — reset --hard
+ * targets the branch's own HEAD, there is no remote to reset to.
+ */
+export const syncLocalRepo = async (params: {
+  repoId: number;
+  branch: string;
+}) => {
+  const dir = repoDir(params.repoId);
+  if (!existsSync(join(dir, '.git'))) {
+    throw new Error(
+      "This uploaded project's files are missing from the preview server. Re-import the project to continue."
+    );
+  }
+  const branches = await git(dir, [
+    'for-each-ref',
+    '--format=%(refname:short)',
+    'refs/heads',
+  ]);
+  const exists = branches.split('\n').some((b) => b.trim() === params.branch);
+  if (exists) {
+    await git(dir, ['checkout', params.branch]);
+  } else {
+    await git(dir, ['checkout', '-B', params.branch, 'main']);
+  }
+  await git(dir, ['reset', '--hard']);
+  await git(dir, ['clean', '-fd']);
+  return dir;
+};
+
+/**
  * One `git status --porcelain` line → the changed path. Exported for tests.
  * git() trims stdout, so the FIRST line may have lost its leading status
  * space (' M _site.json' → 'M _site.json') — a fixed slice(3) then eats the
@@ -247,6 +303,14 @@ export const resetBranchToDefault = async (params: {
   dir: string;
   branch: string;
 }) => {
+  const remote = await hasOrigin(params.dir);
+  if (!remote) {
+    // Upload workspace: local main is production — no fetch, no push.
+    const base = await defaultBranch(params.dir);
+    await git(params.dir, ['checkout', '-B', params.branch, base]);
+    await git(params.dir, ['clean', '-fd']);
+    return;
+  }
   const auth = authFor(params.dir);
   await git(params.dir, ['fetch', 'origin', '--prune'], auth);
   const base = await defaultBranch(params.dir);
@@ -287,8 +351,15 @@ export const squashIntoDefault = async (params: {
     ? [`--author=${params.author.name} <${params.author.email}>`]
     : [];
 
-  await git(params.dir, ['fetch', 'origin', '--prune'], auth);
+  // Upload workspaces have no origin: production is the local default branch,
+  // so there is nothing to fetch and nothing to push — the squash commit on
+  // local main IS the publish.
+  const remote = await hasOrigin(params.dir);
+  if (remote) {
+    await git(params.dir, ['fetch', 'origin', '--prune'], auth);
+  }
   const base = await defaultBranch(params.dir);
+  const baseTarget = remote ? `origin/${base}` : base;
 
   // Every applied edit is already committed+pushed, so anything loose in the
   // tree is stray (analyzer wrappers are git-excluded and survive this).
@@ -299,13 +370,13 @@ export const squashIntoDefault = async (params: {
     await git(params.dir, ['checkout', params.branch]).catch(() => '');
   };
 
-  await git(params.dir, ['checkout', '-B', base, `origin/${base}`]);
+  await git(params.dir, ['checkout', '-B', base, baseTarget]);
   try {
     await git(params.dir, ['merge', '--squash', params.branch]);
   } catch {
     // Conflict with newer production commits — nothing is lost: the session
     // branch keeps every edit. Hand the decision back to the caller.
-    await git(params.dir, ['reset', '--hard', `origin/${base}`]).catch(() => '');
+    await git(params.dir, ['reset', '--hard', baseTarget]).catch(() => '');
     await restoreSessionBranch();
     return { sha: null, changed: true, conflict: true };
   }
@@ -318,18 +389,20 @@ export const squashIntoDefault = async (params: {
   }
 
   await git(params.dir, [...identity, 'commit', '-m', params.message, ...authorFlag]);
-  try {
-    await git(params.dir, ['push', 'origin', base], auth);
-  } catch (error) {
-    // Base moved between fetch and push (rare race) — treat like a conflict:
-    // drop the local squash commit and keep the session intact.
-    await git(params.dir, ['reset', '--hard', `origin/${base}`]).catch(() => '');
-    await restoreSessionBranch();
-    const message = error instanceof Error ? error.message : 'push failed';
-    if (/non-fast-forward|fetch first|rejected/i.test(message)) {
-      return { sha: null, changed: true, conflict: true };
+  if (remote) {
+    try {
+      await git(params.dir, ['push', 'origin', base], auth);
+    } catch (error) {
+      // Base moved between fetch and push (rare race) — treat like a conflict:
+      // drop the local squash commit and keep the session intact.
+      await git(params.dir, ['reset', '--hard', baseTarget]).catch(() => '');
+      await restoreSessionBranch();
+      const message = error instanceof Error ? error.message : 'push failed';
+      if (/non-fast-forward|fetch first|rejected/i.test(message)) {
+        return { sha: null, changed: true, conflict: true };
+      }
+      throw error;
     }
-    throw error;
   }
   const sha = await git(params.dir, ['rev-parse', 'HEAD']);
   return { sha, changed: true, conflict: false };
@@ -361,6 +434,10 @@ export const commitAndPush = async (params: {
   const auth = authFor(params.dir);
   await git(params.dir, ['add', '-A']);
   await git(params.dir, [...identity, 'commit', '-m', params.message, ...authorFlag]);
+  if (!(await hasOrigin(params.dir))) {
+    // Upload workspace: the local commit is the whole story.
+    return git(params.dir, ['rev-parse', 'HEAD']);
+  }
   try {
     await git(params.dir, ['push', '-u', 'origin', params.branch], auth);
   } catch (error) {

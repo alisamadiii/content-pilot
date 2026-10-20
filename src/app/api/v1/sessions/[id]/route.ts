@@ -1,4 +1,6 @@
 import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm';
+import { existsSync } from 'fs';
+import { join } from 'path';
 import { z } from 'zod';
 import { client, db } from '@/db';
 import { previewAttachment, previewMessage, previewSession } from '@/db/schema';
@@ -8,7 +10,8 @@ import {
 } from '@/lib/session-auth';
 import { removeSessionUploads } from '@/lib/uploads';
 import { previewConfig, previewUrlFor } from '@/preview/config';
-import { squashIntoDefault, syncRepo } from '@/worker/git';
+import { refreshLiveSnapshot } from '@/preview/live-serve';
+import { repoDir, squashIntoDefault, syncRepo } from '@/worker/git';
 
 const actionSchema = z.discriminatedUnion('action', [
   z.object({
@@ -154,14 +157,30 @@ export const POST = async (
       );
     }
     try {
-      // syncRepo re-clones if the workspace was cleaned and resets the branch
-      // to its pushed state (every applied edit is already committed+pushed).
-      const dir = await syncRepo({
-        repoId: row.repoId,
-        owner: row.owner,
-        repo: row.repo,
-        branch: row.branch,
-      });
+      let dir: string;
+      if (row.source === 'upload') {
+        // Upload workspaces have no remote and can never be re-cloned — the
+        // local clone IS the project. A missing dir is a hard error.
+        dir = repoDir(row.repoId);
+        if (!existsSync(join(dir, '.git'))) {
+          return Response.json(
+            {
+              error:
+                "This uploaded project's files are missing from the preview server. Re-import the project to continue.",
+            },
+            { status: 422, headers }
+          );
+        }
+      } else {
+        // syncRepo re-clones if the workspace was cleaned and resets the branch
+        // to its pushed state (every applied edit is already committed+pushed).
+        dir = await syncRepo({
+          repoId: row.repoId,
+          owner: row.owner,
+          repo: row.repo,
+          branch: row.branch,
+        });
+      }
       const squash = await squashIntoDefault({
         dir,
         branch: row.branch,
@@ -176,6 +195,11 @@ export const POST = async (
           { error: 'merge_conflict' },
           { status: 409, headers }
         );
+      }
+      if (row.source === 'upload' && squash.changed && squash.sha) {
+        // The live site serves the published snapshot — refresh it now so the
+        // publish is visible instantly (no-op for non-static projects).
+        await refreshLiveSnapshot(row.repoId).catch(() => null);
       }
       return Response.json(
         { id, sha: squash.sha, changed: squash.changed },

@@ -1,7 +1,7 @@
 import { rm } from 'fs/promises';
 import { join } from 'path';
 import { findSessionForbiddenPaths } from '../worker/guardrails';
-import { defaultBranch, git } from '../worker/git';
+import { baseRef, git } from '../worker/git';
 import { parseNameStatus } from './file-diff';
 
 /**
@@ -74,8 +74,8 @@ export const normalizeRestorePaths = (
 
 /** The production commit this session branched from (what Publish diffs against). */
 export const productionBase = async (dir: string) => {
-  const branch = await defaultBranch(dir);
-  return git(dir, ['merge-base', `origin/${branch}`, 'HEAD']);
+  // origin/<default> for GitHub clones, local <default> for uploads.
+  return git(dir, ['merge-base', await baseRef(dir), 'HEAD']);
 };
 
 const scopeArgs = (paths: string[] | undefined) =>

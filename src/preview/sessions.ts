@@ -19,6 +19,7 @@ import {
   discardChanges,
   resetBranchToDefault,
   sanitize,
+  syncLocalRepo,
   syncRepo,
 } from '../worker/git';
 import { injectAnalyzer } from './analyzer';
@@ -276,12 +277,17 @@ export const startSession = async (row: SessionRow) => {
   log(`session ${row.id}: starting for ${row.owner}/${row.repo}`);
   let bootOutput: () => string = () => '';
   try {
-    const dir = await syncRepo({
-      repoId: row.repoId,
-      owner: row.owner,
-      repo: row.repo,
-      branch: row.branch,
-    });
+    // Upload workspaces are local-only git (no remote, nothing to re-clone);
+    // GitHub ones sync against origin as always.
+    const dir =
+      row.source === 'upload'
+        ? await syncLocalRepo({ repoId: row.repoId, branch: row.branch })
+        : await syncRepo({
+            repoId: row.repoId,
+            owner: row.owner,
+            repo: row.repo,
+            branch: row.branch,
+          });
 
     const appDir = findAppDir(dir, await getAppDir(row.repoId));
     // Static repos (no package.json) skip the install entirely — nothing to
