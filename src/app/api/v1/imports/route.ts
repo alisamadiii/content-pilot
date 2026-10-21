@@ -9,9 +9,9 @@ import { extractCredentials, sessionCorsHeaders } from '@/lib/request-credential
 import { config, ensureWorkspace } from '@/worker/config';
 import { git, repoDir } from '@/worker/git';
 import { extractZip, stripWrapperDir, ZipError } from '@/worker/zip-extract';
-import { detectFramework } from '@/preview/framework';
-import { findAppDir } from '@/preview/session-boot';
-import { refreshLiveSnapshot } from '@/preview/live-serve';
+import { checkFramework } from '@/preview/framework';
+import { enqueueLiveBuild } from '@/preview/live-build';
+import { liveUrlFor } from '@/preview/live-serve';
 
 export const runtime = 'nodejs';
 
@@ -20,8 +20,9 @@ export const runtime = 'nodejs';
  * import token bound to a fresh synthetic repoId, the browser POSTs the zip
  * straight here (Vercel's body cap rules out proxying through the hub), and
  * the extracted tree becomes a local-only git workspace — `git init`, branch
- * `main`, one initial commit. For static sites the first live snapshot is
- * written immediately so the live URL works before the first publish.
+ * `main`, one initial commit. Only static sites get in (Astro, Vite, plain
+ * HTML) — anything else is refused before the workspace exists. The first
+ * live build is queued right away so the live URL works before any publish.
  *
  * The body is a raw zip stream (`Content-Type: application/zip`), never
  * multipart: `request.formData()` would buffer the whole archive in memory.
@@ -128,6 +129,18 @@ export const POST = async (request: Request) => {
       );
     }
 
+    // The gate: refuse Next.js, SSR frameworks and unknown stacks BEFORE the
+    // workspace exists (the hub then drops its reserved, still-hidden row).
+    // Sites always live at the root.
+    const check = checkFramework(staging);
+    if (!check.ok) {
+      await cleanup();
+      return Response.json(
+        { error: check.message, code: 'unsupported_framework', reason: check.reason },
+        { status: 422, headers }
+      );
+    }
+
     // Local-only git repo: branch `main` regardless of git version defaults,
     // committer = bot identity, author = the uploading hub user (same
     // convention as commitAndPush).
@@ -156,16 +169,17 @@ export const POST = async (request: Request) => {
     await rename(staging, dir);
     await rm(zipPath, { force: true }).catch(() => undefined);
 
-    let framework: string | null = null;
-    try {
-      framework = detectFramework(findAppDir(dir));
-    } catch {
-      framework = null;
-    }
-    const liveUrl = await refreshLiveSnapshot(repoId);
+    const sha = await git(dir, ['rev-parse', 'HEAD']);
+    const build = await enqueueLiveBuild(repoId, sha.trim());
 
     return Response.json(
-      { repoId, files, framework, liveUrl },
+      {
+        repoId,
+        files,
+        framework: check.framework,
+        liveUrl: liveUrlFor(repoId),
+        build,
+      },
       { status: 201, headers }
     );
   } catch (error) {

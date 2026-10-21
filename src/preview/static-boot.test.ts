@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { isAbsolute, join } from 'path';
 import { detectFramework } from './framework';
-import { devCommand, findAppDir, pilotViteBin } from './session-boot';
+import { assertSiteRoot, devCommand, pilotViteBin } from './session-boot';
 
 // Static-repo boot decisions (GitHub-pages-style sites: index.html + assets,
 // no package.json). New behavior added 2026-10-20; the framework-repo paths
@@ -19,24 +19,16 @@ const fixture = async (files: Record<string, string>) => {
   return dir;
 };
 
-test('findAppDir accepts an index.html-only repo root', async () => {
+// DELIBERATE CHANGE (root-only sites): the folder finder became assertSiteRoot
+// and the app-folder override cases were removed.
+test('assertSiteRoot accepts an index.html-only repo root', async () => {
   const dir = await fixture({ 'index.html': '<h1>hi</h1>' });
-  assert.equal(findAppDir(dir), dir);
+  assert.doesNotThrow(() => assertSiteRoot(dir));
 });
 
-test('findAppDir accepts an index.html-only app-folder override', async () => {
-  const dir = await fixture({ 'site/index.html': '<h1>hi</h1>' });
-  assert.equal(findAppDir(dir, 'site'), join(dir, 'site'));
-});
-
-test('findAppDir still rejects a root with neither package.json nor index.html', async () => {
+test('assertSiteRoot still rejects a root with neither package.json nor index.html', async () => {
   const dir = await fixture({ 'README.md': 'nothing here' });
-  assert.throws(() => findAppDir(dir), /package\.json or index\.html/);
-});
-
-test('findAppDir still rejects an override folder with neither marker', async () => {
-  const dir = await fixture({ 'site/README.md': 'nope' });
-  assert.throws(() => findAppDir(dir, 'site'), /package\.json or index\.html/);
+  assert.throws(() => assertSiteRoot(dir), /couldn't find a site at the root/);
 });
 
 test('detectFramework: no package.json + index.html → static', async () => {

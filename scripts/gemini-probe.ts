@@ -28,7 +28,7 @@ import {
   loadSkill,
   parseSkillInvocation,
 } from '../src/preview/skills';
-import { chooseImageDir, listImageDirHints, publicRelFor, slugify } from '../src/preview/image-dirs';
+import { chooseImageDir, listImageDirHints, slugify } from '../src/preview/image-dirs';
 import { mkdir, writeFile } from 'fs/promises';
 
 const [repoId, message, pageUrl = 'http://x.localhost:3020/'] = process.argv.slice(2);
@@ -38,19 +38,18 @@ if (!repoId || !message) {
 }
 // A repo id under WORKSPACE_DIR, or an absolute path to any local clone.
 const dir = repoId.startsWith('/') ? repoId : join(config.workspaceDir, repoId);
-const appDir = dir;
 
 const main = async () => {
   writeGeminiRuntime((m) => console.error('[setup]', m));
   console.error(`[probe] model ${previewConfig.geminiModel}, clone ${dir}`);
-  const repo = await buildRepoContext(dir, appDir);
+  const repo = await buildRepoContext(dir);
   const systemPromptPath = await writeGeminiSystemPrompt('probe', repo);
   const context = `The client is editing this page: ${pageUrl}`;
   let skillBlock = '';
   let request = message;
   const invocation = parseSkillInvocation(message);
   if (invocation) {
-    const skill = await loadSkill(dir, appDir, invocation.name);
+    const skill = await loadSkill(dir, invocation.name);
     if (skill) {
       skillBlock = buildSkillBlock(skill, invocation.rest);
       request = invocation.rest || bareSkillRequest(skill.name);
@@ -59,7 +58,7 @@ const main = async () => {
   // Mirrors chat.ts: a skill names its own files, so no page pin with it.
   const pinned = skillBlock
     ? ''
-    : await buildPinnedFile(context, dir, appDir, {
+    : await buildPinnedFile(context, dir, {
         message,
         routes: repo.routes,
         hasAttachments: Boolean(process.env.IMAGE),
@@ -68,8 +67,8 @@ const main = async () => {
   // attachments.ts would (server-chosen path, placeholder bytes, prompt block).
   let attachBlock = '';
   if (process.env.IMAGE) {
-    const publicRel = publicRelFor(dir, appDir);
-    const hints = await listImageDirHints(appDir, publicRel);
+    const publicRel = repo.publicRel;
+    const hints = await listImageDirHints(dir, publicRel);
     const folder = chooseImageDir(process.env.IMAGE, hints, publicRel);
     const dest = `${folder}/${slugify(process.env.IMAGE)}.webp`;
     await mkdir(join(dir, folder), { recursive: true });

@@ -51,6 +51,10 @@ before(async () => {
   const current = join(ws, '.live', String(MAPPED_REPO), 'current');
   mkdirSync(current, { recursive: true });
   writeFileSync(join(current, 'index.html'), '<h1>live snapshot</h1>');
+  // Astro build.format 'file' output: flat page files, not page/index.html.
+  writeFileSync(join(current, 'gallery.html'), '<h1>gallery page</h1>');
+  mkdirSync(join(current, 'about'), { recursive: true });
+  writeFileSync(join(current, 'about', 'index.html'), '<h1>about page</h1>');
 
   // A fake dev server registered under the session label 'www' — the first
   // label of the mapped domain. The spoof guard must keep it unreachable.
@@ -127,4 +131,30 @@ test('upgrade on a mapped host is destroyed', async () => {
     }, 2000);
   });
   assert.equal(closed, true);
+});
+
+test('clean URLs: /gallery serves gallery.html (Astro build.format file)', async () => {
+  const res = await request(`site-${MAPPED_REPO}.localhost`, '/gallery');
+  assert.equal(res.status, 200);
+  assert.match(res.body, /gallery page/);
+  const direct = await request(`site-${MAPPED_REPO}.localhost`, '/gallery.html');
+  assert.match(direct.body, /gallery page/);
+});
+
+test('directory pages still resolve: /about serves about/index.html', async () => {
+  const res = await request(`site-${MAPPED_REPO}.localhost`, '/about/');
+  assert.equal(res.status, 200);
+  assert.match(res.body, /about page/);
+});
+
+test('a real miss is a 404, served from the site 404.html once it ships one', async () => {
+  const plain = await request(`site-${MAPPED_REPO}.localhost`, '/missing');
+  assert.equal(plain.status, 404);
+  writeFileSync(
+    join(ws, '.live', String(MAPPED_REPO), 'current', '404.html'),
+    '<h1>custom not found</h1>'
+  );
+  const custom = await request(`site-${MAPPED_REPO}.localhost`, '/missing');
+  assert.equal(custom.status, 404);
+  assert.match(custom.body, /custom not found/);
 });

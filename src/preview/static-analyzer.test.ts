@@ -14,7 +14,7 @@ test('injectAnalyzer (static): wrapper config, git exclude, boot plan', async ()
   await mkdir(join(dir, '.git', 'info'), { recursive: true });
   await writeFile(join(dir, 'index.html'), '<h1>hi</h1>');
 
-  const boot = injectAnalyzer(dir, dir);
+  const boot = injectAnalyzer(dir);
   assert.deepEqual(boot, {
     framework: 'static',
     configPath: 'ai-analyzer/preview.static.config.mjs',

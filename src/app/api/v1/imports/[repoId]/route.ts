@@ -20,19 +20,16 @@ import {
 import { removeSessionUploads } from '@/lib/uploads';
 import { config } from '@/worker/config';
 import { repoDir } from '@/worker/git';
-import {
-  isLiveServable,
-  liveUrlFor,
-  removeLiveSnapshot,
-} from '@/preview/live-serve';
-import { detectFramework } from '@/preview/framework';
-import { findAppDir } from '@/preview/session-boot';
+import { hasLiveSite, liveUrlFor, removeLiveSnapshot } from '@/preview/live-serve';
+import { latestLiveBuild, removeLiveBuilds } from '@/preview/live-build';
+import { checkFramework } from '@/preview/framework';
 
 export const runtime = 'nodejs';
 
 /**
  * Server-to-server (x-api-key only) management of a project's pilot state:
- *  - GET: does the workspace exist (hub's finalizeUpload verification)?
+ *  - GET: does the workspace exist (hub's finalizeUpload verification), and
+ *    the live site's state — URL, whether it has ever gone live, latest build.
  *  - DELETE: tear down EVERYTHING the pilot holds for the repo when the hub
  *    deletes the project — workspace clone, live snapshot, domain mappings,
  *    all preview sessions (+ their transcripts/events/attachments/staged
@@ -66,15 +63,30 @@ export const GET = async (
   const exists = existsSync(join(dir, '.git'));
   let framework: string | null = null;
   if (exists) {
-    try {
-      framework = detectFramework(findAppDir(dir));
-    } catch {
-      framework = null;
-    }
+    // Sites live at the repo root; anything unsupported reports null.
+    const check = checkFramework(dir);
+    framework = check.ok ? check.framework : null;
   }
-  const liveUrl = exists && isLiveServable(repoId) ? liveUrlFor(repoId) : null;
-  const domains = exists ? await listDomainsForRepo(repoId) : [];
-  return Response.json({ exists, framework, liveUrl, domains });
+  const build = await latestLiveBuild(repoId);
+  const domains = await listDomainsForRepo(repoId);
+  return Response.json({
+    exists,
+    framework,
+    liveUrl: liveUrlFor(repoId),
+    live: hasLiveSite(repoId),
+    build: build
+      ? {
+          id: build.id,
+          status: build.status,
+          sha: build.sha,
+          error: build.error,
+          log: build.log,
+          createdAt: build.createdAt,
+          finishedAt: build.finishedAt,
+        }
+      : null,
+    domains,
+  });
 };
 
 export const DELETE = async (
@@ -133,6 +145,7 @@ export const DELETE = async (
     await rm(target, { recursive: true, force: true });
   }
   await removeLiveSnapshot(repoId);
+  await removeLiveBuilds(repoId);
   // The live site's domains + per-repo setting overrides die with the project.
   await removeAllDomainsForRepo(repoId);
   await removeRepoSettings(repoId);

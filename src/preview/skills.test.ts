@@ -46,37 +46,29 @@ test('parseSkillInvocation ignores ordinary messages and paths', () => {
   assert.equal(parseSkillInvocation('/'), null);
 });
 
-test('loadSkill reads SKILL.md without frontmatter, root before app folder', async () => {
+// DELIBERATE CHANGE (root-only sites): app-folder override removed; the
+// app-folder skill lookups (`only-app`, app shadowed by root) were dropped.
+test('loadSkill reads SKILL.md without frontmatter from the repo root', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cp-skill-'));
-  const app = join(dir, 'site');
   await mkdir(join(dir, '.claude/skills/add-page'), { recursive: true });
-  await mkdir(join(app, '.claude/skills/add-page'), { recursive: true });
-  await mkdir(join(app, '.claude/skills/only-app'), { recursive: true });
   await mkdir(join(dir, '.gemini/skills/gem'), { recursive: true });
   await writeFile(
     join(dir, '.claude/skills/add-page/SKILL.md'),
     '---\nname: add-page\ndescription: Adds a page\n---\n\n# Root version\nDo X.'
   );
-  await writeFile(join(app, '.claude/skills/add-page/SKILL.md'), '# App version');
-  await writeFile(join(app, '.claude/skills/only-app/SKILL.md'), 'App only');
   await writeFile(join(dir, '.gemini/skills/gem/SKILL.md'), 'Gemini-only skill');
-  assert.deepEqual(await loadSkill(dir, app, 'add-page'), {
+  assert.deepEqual(await loadSkill(dir, 'add-page'), {
     name: 'add-page',
     body: '# Root version\nDo X.',
     dir: '.claude/skills/add-page',
   });
-  assert.deepEqual(await loadSkill(dir, app, 'only-app'), {
-    name: 'only-app',
-    body: 'App only',
-    dir: 'site/.claude/skills/only-app',
-  });
-  assert.deepEqual(await loadSkill(dir, app, 'gem'), {
+  assert.deepEqual(await loadSkill(dir, 'gem'), {
     name: 'gem',
     body: 'Gemini-only skill',
     dir: '.gemini/skills/gem',
   });
-  assert.equal(await loadSkill(dir, app, 'missing'), null);
-  assert.equal(await loadSkill(dir, app, '../etc'), null);
+  assert.equal(await loadSkill(dir, 'missing'), null);
+  assert.equal(await loadSkill(dir, '../etc'), null);
 });
 
 test('buildSkillBlock wraps the body with the invocation and precedence note', () => {
@@ -133,26 +125,20 @@ test('scanSkillsDir lists valid skills only; missing dir and bad entries are ski
   assert.deepEqual(await scanSkillsDir(join(dir, 'nope')), []);
 });
 
-test('listSkills merges app-folder and root skills, root winning, sorted by name', async () => {
+// DELIBERATE CHANGE (root-only sites): app-folder override removed; listSkills
+// no longer merges a subfolder's skills, so only the root-only case remains.
+test('listSkills lists root skills sorted by name', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cp-skilllist-'));
-  // App skills scan first, so insertion order is zeta/shared then alpha —
-  // the result must still come back sorted.
   for (const [base, name, desc] of [
     [join(dir, 'site'), 'zeta', 'app zeta'],
-    [join(dir, 'site'), 'shared', 'app shared'],
-    [dir, 'alpha', 'root alpha'],
     [dir, 'shared', 'root shared'],
+    [dir, 'alpha', 'root alpha'],
   ]) {
     await mkdir(join(base, '.claude/skills', name), { recursive: true });
     await writeFile(join(base, '.claude/skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${desc}\n---`);
   }
-  assert.deepEqual(await listSkills(dir, 'site'), [
-    { name: 'alpha', description: 'root alpha' },
-    { name: 'shared', description: 'root shared' },
-    { name: 'zeta', description: 'app zeta' },
-  ]);
-  // No app folder configured → root only.
-  assert.deepEqual(await listSkills(dir, null), [
+  // A subfolder's skills are never picked up.
+  assert.deepEqual(await listSkills(dir), [
     { name: 'alpha', description: 'root alpha' },
     { name: 'shared', description: 'root shared' },
   ]);

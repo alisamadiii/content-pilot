@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  appDirKey,
   clampMaxSessions,
   geminiTierKey,
   MAX_SESSIONS_CEILING,
@@ -10,42 +9,17 @@ import {
   normalizeProvider,
   providerKey,
   resolveGeminiKey,
-  sanitizeAppDir,
 } from './settings-rules';
 
+// DELIBERATE CHANGE (root-only sites): app-folder override removed (its key
+// assertions dropped from this test).
 test('setting keys are namespaced per repo', () => {
-  assert.equal(appDirKey(1247662764), 'app_dir:1247662764');
   assert.equal(providerKey(1247662764), 'ai_provider:1247662764');
-  assert.notEqual(appDirKey(1), providerKey(1));
   assert.equal(MAX_SESSIONS_KEY, 'max_preview_sessions');
 });
 
-test('sanitizeAppDir trims and strips surrounding slashes', () => {
-  assert.equal(sanitizeAppDir('  marketing/ '), 'marketing');
-  assert.equal(sanitizeAppDir('/apps/web/'), 'apps/web');
-  assert.equal(sanitizeAppDir('///x///'), 'x');
-  assert.equal(sanitizeAppDir('apps/web/site'), 'apps/web/site');
-});
-
-test('sanitizeAppDir treats empty / unset as auto (null)', () => {
-  assert.equal(sanitizeAppDir(''), null);
-  assert.equal(sanitizeAppDir('   '), null);
-  assert.equal(sanitizeAppDir('/'), null);
-  assert.equal(sanitizeAppDir(null), null);
-  assert.equal(sanitizeAppDir(undefined), null);
-});
-
-test('sanitizeAppDir rejects traversal anywhere in the path', () => {
-  for (const bad of ['..', '../x', 'x/..', 'x/../y', '/..']) {
-    assert.throws(() => sanitizeAppDir(bad), /inside the repo/, bad);
-  }
-});
-
-test('sanitizeAppDir keeps folders whose names merely contain dots', () => {
-  assert.equal(sanitizeAppDir('..x'), '..x');
-  assert.equal(sanitizeAppDir('site.v2/app'), 'site.v2/app');
-  assert.equal(sanitizeAppDir('.hidden'), '.hidden');
-});
+// DELIBERATE CHANGE (root-only sites): app-folder override removed.
+// Its path-sanitizer tests went with it.
 
 test('normalizeProvider: only "claude" (any case, trimmed) selects claude', () => {
   assert.equal(normalizeProvider('claude'), 'claude');
@@ -89,7 +63,6 @@ test('clampMaxSessions clamps both the override and the fallback into 1..ceiling
 test('geminiTierKey is namespaced per repo and distinct from the other keys', () => {
   assert.equal(geminiTierKey(1247662764), 'gemini_tier:1247662764');
   assert.notEqual(geminiTierKey(1), providerKey(1));
-  assert.notEqual(geminiTierKey(1), appDirKey(1));
 });
 
 test('normalizeGeminiTier: only an explicit "paid" selects paid; everything else is free', () => {

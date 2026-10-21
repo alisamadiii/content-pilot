@@ -101,11 +101,6 @@ export const PREVIEW_SESSION_STATUS_VALUES = [
   // are all retained. Revived by flipping back to 'starting' (project open or
   // an incoming message). Not "live": paused rows own no port or process.
   'paused',
-  // Terminal, admin-fixable: the repo's site folder can't be resolved (no root
-  // package.json + no app-folder override). Not "live" — a retry after the admin
-  // sets the app folder makes a fresh session. The hub shows an "ask your admin"
-  // panel for this instead of a generic failure.
-  'needs_config',
   'failed',
   'closed',
   'published',
@@ -301,3 +296,42 @@ export const previewEvent = pgTable(
   (table) => [index('idx_preview_event_session').on(table.sessionId, table.id)]
 );
 
+
+// ---------------------------------------------------------------------------
+// Live-site builds: every publish (and every upload import) queues one build of
+// the exact published commit. The preview supervisor builds it (astro/vite →
+// dist/, static → as-is) and atomically swaps the output into the live serve
+// dir. A failed build leaves the previous live site untouched.
+// ---------------------------------------------------------------------------
+
+export const LIVE_BUILD_STATUS_VALUES = [
+  'queued',
+  'building',
+  'ready',
+  'failed',
+  // A newer queued build for the same repo superseded this one before it ran.
+  'skipped',
+] as const;
+export type LiveBuildStatus = (typeof LIVE_BUILD_STATUS_VALUES)[number];
+
+export const liveBuild = pgTable(
+  'live_build',
+  {
+    id: serial('id').primaryKey(),
+    repoId: bigint('repo_id', { mode: 'number' }).notNull(),
+    // The published commit — built via `git archive <sha>`, never a branch tip.
+    sha: text('sha').notNull(),
+    status: text('status').$type<LiveBuildStatus>().notNull().default('queued'),
+    // Client-facing one-liner when status = failed.
+    error: text('error'),
+    // Tail of the install/build output, for the hub's "show details".
+    log: text('log'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    startedAt: timestamp('started_at'),
+    finishedAt: timestamp('finished_at'),
+  },
+  (table) => [
+    index('idx_live_build_repo').on(table.repoId, table.id),
+    index('idx_live_build_status').on(table.status),
+  ]
+);

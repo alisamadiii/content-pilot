@@ -100,19 +100,17 @@ const NOTHING: PinnedContext = { text: '', files: [], picked: false, route: null
 export const buildPinnedFile = async (
   context: string | null,
   dir: string,
-  appDir: string,
   options: {
     message?: string;
     routes?: Map<string, string>;
     hasAttachments?: boolean;
   } = {}
-): Promise<string> => (await collectPinned(context, dir, appDir, options)).text;
+): Promise<string> => (await collectPinned(context, dir, options)).text;
 
 /** buildPinnedFile plus the underlying files, for pre-run checks (ambiguity). */
 export const collectPinned = async (
   context: string | null,
   dir: string,
-  appDir: string,
   options: {
     message?: string;
     routes?: Map<string, string>;
@@ -121,25 +119,23 @@ export const collectPinned = async (
 ): Promise<PinnedContext> => {
   const ref = parseSourceRef(context);
   if (ref) {
-    for (const file of [join(appDir, ref.path), join(dir, ref.path)]) {
-      try {
-        const content = await readFile(file, 'utf8');
-        if (content.length > MAX_PINNED_FILE_BYTES) return NOTHING;
-        const text =
-          `The client clicked an element in \`${ref.path}\`` +
-          (ref.line ? ` (their element is at line ${ref.line})` : '') +
-          `. The full current content of that file is below — you already have ` +
-          `it, so make the change by editing THIS file. Do not read it again, ` +
-          `do not search the repo, do not run commands.\n\n` +
-          '```\n' +
-          content +
-          '\n```';
-        return { text, files: [{ path: ref.path, content }], picked: true, route: null };
-      } catch {
-        // try the next candidate path
-      }
+    let content: string;
+    try {
+      content = await readFile(join(dir, ref.path), 'utf8');
+    } catch {
+      return NOTHING;
     }
-    return NOTHING;
+    if (content.length > MAX_PINNED_FILE_BYTES) return NOTHING;
+    const text =
+      `The client clicked an element in \`${ref.path}\`` +
+      (ref.line ? ` (their element is at line ${ref.line})` : '') +
+      `. The full current content of that file is below — you already have ` +
+      `it, so make the change by editing THIS file. Do not read it again, ` +
+      `do not search the repo, do not run commands.\n\n` +
+      '```\n' +
+      content +
+      '\n```';
+    return { text, files: [{ path: ref.path, content }], picked: true, route: null };
   }
 
   const routes = options.routes;
@@ -153,7 +149,7 @@ export const collectPinned = async (
   const route = mentioned ?? current;
   const pageFile = resolvePageFile(routes, route);
   if (!pageFile) return NOTHING;
-  const bundle = await collectPageBundle(dir, appDir, pageFile, MAX_PINNED_FILE_BYTES);
+  const bundle = await collectPageBundle(dir, pageFile, MAX_PINNED_FILE_BYTES);
   if (!bundle) return NOTHING;
   const who = mentioned ? 'The request is about' : 'The client is viewing';
   const parts = [

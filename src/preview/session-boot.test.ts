@@ -6,17 +6,18 @@ import { join } from 'path';
 import { previewConfig } from './config';
 import {
   allowedHostSuffix,
-  AppDirConfigError,
+  assertSiteRoot,
   depsHash,
   devCommand,
-  findAppDir,
   hasDevScript,
   INSTALL_HASH_MARKER,
   INSTALL_SCHEME,
   installMarker,
   installUpToDate,
+  NO_SITE_MESSAGE,
   publicEndpoint,
   salientError,
+  userCodeEnv,
 } from './session-boot';
 
 const repo = async (files: Record<string, string>) => {
@@ -28,26 +29,38 @@ const repo = async (files: Record<string, string>) => {
   return dir;
 };
 
-// ---------------------------------------------------------------- app folder
+// ---------------------------------------------------------------- site root
 
-test('findAppDir: root package.json → root; override → that subfolder', async () => {
+// DELIBERATE CHANGE (root-only sites): the app-folder override and its config
+// error are gone; the folder finder became assertSiteRoot. The
+// override/subfolder cases were removed; root cases kept below.
+
+test('assertSiteRoot: root package.json passes', async () => {
   const dir = await repo({ 'package.json': '{}', 'site/package.json': '{}' });
-  assert.equal(findAppDir(dir), dir);
-  assert.equal(findAppDir(dir, null), dir);
-  assert.equal(findAppDir(dir, 'site'), join(dir, 'site'));
+  assert.doesNotThrow(() => assertSiteRoot(dir));
 });
 
-test('findAppDir never guesses a subfolder: no root package.json + no override is a config error', async () => {
+test('assertSiteRoot never looks in subfolders: no root package.json is a plain client-facing error', async () => {
   const dir = await repo({ 'site/package.json': '{}' });
-  assert.throws(() => findAppDir(dir), (e: unknown) => e instanceof AppDirConfigError && /set its app folder/.test((e as Error).message));
+  assert.throws(
+    () => assertSiteRoot(dir),
+    (e: unknown) =>
+      e instanceof Error &&
+      e.message === NO_SITE_MESSAGE &&
+      /root of this project/.test(e.message) &&
+      !e.message.includes('—')
+  );
 });
 
-test('findAppDir: an override pointing at a folder without package.json names the folder in the error', async () => {
-  const dir = await repo({ 'package.json': '{}' });
-  assert.throws(
-    () => findAppDir(dir, 'marketing'),
-    (e: unknown) => e instanceof AppDirConfigError && /"marketing" has no package\.json/.test((e as Error).message)
-  );
+// Regression (2026-10-21, root-only sites): empty root throws, index.html-only
+// and package.json-only roots pass.
+test('assertSiteRoot: empty dir throws; index.html-only and package.json-only roots pass', async () => {
+  const empty = await repo({});
+  assert.throws(() => assertSiteRoot(empty), /couldn't find a site at the root/);
+  const html = await repo({ 'index.html': '<h1>hi</h1>' });
+  assert.doesNotThrow(() => assertSiteRoot(html));
+  const pkg = await repo({ 'package.json': '{}' });
+  assert.doesNotThrow(() => assertSiteRoot(pkg));
 });
 
 // ------------------------------------------------------------- install cache
@@ -105,31 +118,14 @@ test('astro: wrapper config, pinned root, foreground flag; via npm run dev when 
   assert.deepEqual(devCommand(noScript, 4101, boot).args.slice(0, 2), ['astro', 'dev']);
 });
 
-test('vite and next always run the binary directly (client dev scripts fight the port)', async () => {
+// DELIBERATE CHANGE (static-only pivot): the Next.js boot path and the
+// unrecognized-framework plain-boot fallback were removed — unsupported
+// projects are refused at import/start, so devCommand always has a BootPlan.
+test('vite always runs the binary directly (client dev scripts fight the port)', async () => {
   const dir = await repo({ 'package.json': '{"scripts":{"dev":"vite --port 1"}}' });
   assert.deepEqual(devCommand(dir, 4102, { framework: 'vite', configPath: 'ai-analyzer/preview.vite.config.mjs' }), {
     cmd: 'npx',
     args: ['vite', 'dev', '--config', 'ai-analyzer/preview.vite.config.mjs', '--port', '4102', '--host', '127.0.0.1'],
-    env: {},
-  });
-  assert.deepEqual(devCommand(dir, 4103, { framework: 'next', extraEnv: { X: '1' } }), {
-    cmd: 'npx',
-    args: ['next', 'dev', '--port', '4103', '--hostname', '127.0.0.1'],
-    env: { X: '1' },
-  });
-});
-
-test('unrecognized framework boots plainly: npm run dev when present, else npx astro dev', async () => {
-  const withScript = await repo({ 'package.json': '{"scripts":{"dev":"x"}}' });
-  assert.deepEqual(devCommand(withScript, 4104, null), {
-    cmd: 'npm',
-    args: ['run', 'dev', '--', '--port', '4104', '--host', '127.0.0.1'],
-    env: {},
-  });
-  const noScript = await repo({});
-  assert.deepEqual(devCommand(noScript, 4104, null), {
-    cmd: 'npx',
-    args: ['astro', 'dev', '--port', '4104', '--host', '127.0.0.1'],
     env: {},
   });
 });
@@ -183,4 +179,21 @@ test('salientError falls back to the last 300 chars of the raw tail', () => {
 test('salientError caps a matched line at 400 chars', () => {
   const line = 'SyntaxError: ' + 'x'.repeat(1000);
   assert.equal(salientError(line).length, 400);
+});
+
+test('userCodeEnv passes only the allow-list, never pilot secrets', () => {
+  const env = userCodeEnv(
+    { NODE_ENV: 'development' },
+    {
+      PATH: '/usr/bin',
+      HOME: '/home/app',
+      DATABASE_URL: 'postgres://secret',
+      GITHUB_APP_PRIVATE_KEY: 'k',
+      BETTER_AUTH_SECRET: 's',
+      ANTHROPIC_API_KEY: 'a',
+      GEMINI_API_KEY: 'g',
+      EDIT_TOKEN_SECRET: 'e',
+    } as unknown as NodeJS.ProcessEnv
+  );
+  assert.deepEqual(env, { PATH: '/usr/bin', HOME: '/home/app', NODE_ENV: 'development' });
 });

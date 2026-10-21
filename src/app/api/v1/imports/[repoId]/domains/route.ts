@@ -1,5 +1,3 @@
-import { existsSync } from 'fs';
-import { join } from 'path';
 import { z } from 'zod';
 import { client } from '@/db';
 import { verifyApiKey } from '@/lib/api-key';
@@ -18,14 +16,13 @@ import {
   removeDomainMapping,
   setDomainMapping,
 } from '@/lib/settings';
-import { repoDir } from '@/worker/git';
 import { previewConfig } from '@/preview/config';
-import { isLiveServable } from '@/preview/live-serve';
 
 export const runtime = 'nodejs';
 
 /**
- * Server-to-server (x-api-key only) domain management for uploaded projects.
+ * Server-to-server (x-api-key only) domain management for every project's
+ * live site.
  * The hub orchestrates; this route owns the serving map (`domain:<host>`
  * settings rows) the preview proxy resolves hosts against.
  *
@@ -83,15 +80,9 @@ export const PUT = async (
     return Response.json({ error: 'Invalid body' }, { status: 400 });
   }
 
-  if (!existsSync(join(repoDir(repoId), '.git'))) {
-    return Response.json({ error: 'Workspace not found' }, { status: 404 });
-  }
-  if (!isLiveServable(repoId)) {
-    return Response.json(
-      { error: 'Only static sites can be served on a domain.' },
-      { status: 409 }
-    );
-  }
+  // Every project is a static site (imports are gated), so any project can
+  // take a domain — even before its first publish (the proxy serves an
+  // "unpublished" page until a build goes live).
 
   const base = previewBaseHost(previewConfig.urlBase);
   const existing = await listDomainsForRepo(repoId);

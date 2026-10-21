@@ -3,9 +3,6 @@ import { previewConfig } from '@/preview/config';
 // Pure rules behind src/lib/settings.ts, kept DB-free so they can be unit-tested
 // without a DATABASE_URL (importing @/db throws when it is unset).
 
-/** Per-repo app-subfolder override key (e.g. `app_dir:1247662764`). */
-export const appDirKey = (repoId: number) => `app_dir:${repoId}`;
-
 /** Per-repo AI provider override key (e.g. `ai_provider:1247662764`). */
 export const providerKey = (repoId: number) => `ai_provider:${repoId}`;
 
@@ -19,20 +16,6 @@ export type AiProvider = 'claude' | 'gemini';
 
 /** Which Gemini key a project's sessions use. Free is the default. */
 export type GeminiTier = 'free' | 'paid';
-
-/**
- * Sanitized app subfolder: trimmed, surrounding slashes stripped, and
- * traversal/absolute paths rejected so the value can only ever name a folder
- * inside the clone. Returns null for unset/auto, throws for a bad path.
- */
-export const sanitizeAppDir = (raw: string | null | undefined): string | null => {
-  const value = (raw ?? '').trim().replace(/^\/+|\/+$/g, '');
-  if (!value) return null;
-  if (value.startsWith('/') || value.split('/').includes('..')) {
-    throw new Error('App folder must be a path inside the repo.');
-  }
-  return value;
-};
 
 /**
  * Only the exact string `claude` (any case, trimmed) selects Claude; anything

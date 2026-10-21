@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { eq } from 'drizzle-orm';
 import { existsSync } from 'fs';
-import { rm, writeFile } from 'fs/promises';
 import { createServer } from 'net';
 import { join } from 'path';
 import { db } from '@/db';
@@ -12,7 +11,6 @@ import {
   previewSession,
   type PreviewSessionStatus,
 } from '@/db/schema';
-import { getAppDir } from '@/lib/settings';
 import { removeSessionUploads } from '@/lib/uploads';
 import { removeGeminiSystemPrompt } from './gemini-system-prompt';
 import {
@@ -23,23 +21,25 @@ import {
   syncRepo,
 } from '../worker/git';
 import { injectAnalyzer } from './analyzer';
+import { installDeps } from './install';
 import { previewConfig } from './config';
-import type { BootPlan } from './framework';
+import { type BootPlan, checkFramework } from './framework';
 import { emitEvent } from './events';
 import { registerRoute, unregisterRoute } from './proxy';
 import {
-  AppDirConfigError,
   allowedHostSuffix,
+  assertSiteRoot,
   devCommand,
-  findAppDir,
-  INSTALL_HASH_MARKER,
-  installMarker,
-  installUpToDate,
   publicEndpoint,
   salientError,
+  userCodeEnv,
 } from './session-boot';
 
-export { AppDirConfigError } from './session-boot';
+/**
+ * The project isn't a supported static site (no site at the root, Next.js,
+ * SSR, unknown stack). Its message is client-facing and shown un-prefixed.
+ */
+class UnsupportedProjectError extends Error {}
 
 type SessionRow = typeof previewSession.$inferSelect;
 
@@ -47,10 +47,8 @@ type LiveSession = {
   id: string;
   repoId: number;
   dir: string;
-  /** Where the website's package.json lives — dir itself or a subproject. */
-  appDir: string;
-  /** How to boot the tagged dev server (framework + config/launcher), or null. */
-  boot: BootPlan | null;
+  /** How to boot the tagged dev server (framework + wrapper config). */
+  boot: BootPlan;
   port: number;
   child: ChildProcess;
   restarts: number;
@@ -107,74 +105,7 @@ const allocatePort = async () => {
 // Install + dev server
 // ---------------------------------------------------------------------------
 
-const run = (
-  cmd: string,
-  args: string[],
-  opts: { cwd: string; timeoutMs: number }
-) =>
-  new Promise<void>((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd: opts.cwd, env: process.env });
-    let stderr = '';
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr = (stderr + chunk.toString()).slice(-4000);
-    });
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`${cmd} ${args[0]} timed out`));
-    }, opts.timeoutMs);
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new Error(sanitize(stderr.trim() || `${cmd} exited ${code}`)));
-    });
-  });
-
-// Every client repo is npm now. `npm ci` only works with a package-lock.json
-// AND wipes node_modules, so it's reserved for cold dirs that actually have
-// one; everything else gets the incremental install.
-const installDeps = async (dir: string) => {
-  // Stale tree from before the fleet's pnpm → npm switch — npm can't
-  // reconcile a .pnpm layout, so wipe and start clean.
-  if (existsSync(join(dir, 'node_modules', '.pnpm'))) {
-    await rm(join(dir, 'node_modules'), { recursive: true, force: true });
-  }
-  const cold = !existsSync(join(dir, 'node_modules'));
-  // Warm revive fast-path: deps unchanged since the last successful install →
-  // skip npm entirely. This is what makes paused→ready take seconds. The marker
-  // carries an install-scheme tag so a change in HOW we install (e.g. adding
-  // devDependencies) invalidates clones installed the old way and forces one
-  // re-install.
-  const marker = installMarker(dir);
-  if (!cold && installUpToDate(dir, marker)) return;
-  const hasNpmLock = existsSync(join(dir, 'package-lock.json'));
-  // `--include=dev` is load-bearing: the container runs with NODE_ENV=production
-  // (for the Next app), which makes npm OMIT devDependencies by default. Astro
-  // integrations (@astrojs/sitemap, @astrojs/react, …) usually live in
-  // devDependencies, so without this the client's astro.config fails to import
-  // them and the dev server exits at config load.
-  await run(
-    'npm',
-    [
-      cold && hasNpmLock ? 'ci' : 'install',
-      '--include=dev',
-      '--no-audit',
-      '--no-fund',
-    ],
-    {
-      cwd: dir,
-      timeoutMs: previewConfig.installTimeoutMs,
-    }
-  );
-  if (marker) {
-    await writeFile(join(dir, INSTALL_HASH_MARKER), marker).catch(() => {});
-  }
-};
-
-const spawnDevServer = (dir: string, port: number, boot: BootPlan | null) => {
+const spawnDevServer = (dir: string, port: number, boot: BootPlan) => {
   const { cmd, args, env: bootEnv } = devCommand(dir, port, boot);
   // Public scheme/port for the HMR websocket (read by the injected wrapper
   // config) — the browser must dial the proxy's public endpoint, never the
@@ -182,8 +113,7 @@ const spawnDevServer = (dir: string, port: number, boot: BootPlan | null) => {
   const { protocol: publicProtocol, port: publicPort } = publicEndpoint();
   return spawn(cmd, args, {
     cwd: dir,
-    env: {
-      ...process.env,
+    env: userCodeEnv({
       // The container sets NODE_ENV=production for the Next app; a dev server
       // must run in development (astro/vite dev, HMR, and dev-only deps expect
       // it). Also stops plugins from taking prod-only branches during preview.
@@ -195,7 +125,7 @@ const spawnDevServer = (dir: string, port: number, boot: BootPlan | null) => {
       PREVIEW_PUBLIC_PORT: publicPort,
       FORCE_COLOR: '0',
       ...bootEnv,
-    },
+    }),
     detached: false,
   });
 };
@@ -251,11 +181,7 @@ const attachCrashHandler = (session: LiveSession) => {
       session.restarts += 1;
       await setStatus(session.id, 'restarting');
       try {
-        session.child = spawnDevServer(
-          session.appDir,
-          session.port,
-          session.boot
-        );
+        session.child = spawnDevServer(session.dir, session.port, session.boot);
         session.lastSpawnAt = Date.now();
         attachCrashHandler(session);
         await waitForReady(session.port, session.child);
@@ -289,13 +215,21 @@ export const startSession = async (row: SessionRow) => {
             branch: row.branch,
           });
 
-    const appDir = findAppDir(dir, await getAppDir(row.repoId));
+    try {
+      assertSiteRoot(dir);
+    } catch (error) {
+      throw new UnsupportedProjectError((error as Error).message);
+    }
+    // Imports are gated already; this catches projects whose repo changed
+    // underneath us (e.g. a GitHub repo later switched to Next.js).
+    const check = checkFramework(dir);
+    if (!check.ok) throw new UnsupportedProjectError(check.message);
     // Static repos (no package.json) skip the install entirely — nothing to
     // install, and `npm install` in a package-json-less dir would walk UP to a
     // parent package.json and install the wrong thing.
-    if (existsSync(join(appDir, 'package.json'))) {
+    if (existsSync(join(dir, 'package.json'))) {
       await setStatus(row.id, 'installing');
-      await installDeps(appDir);
+      await installDeps(dir);
     }
     // npm leaves artifacts behind (lockfile updates, a fresh package-lock in
     // repos that lack one). Reset so the tree equals the branch before any
@@ -306,22 +240,19 @@ export const startSession = async (row: SessionRow) => {
     // Inject the preview-only AI analyzer (stamps data-cms-src per framework,
     // powers click-to-point-the-AI). Git-invisible and never modifies the real
     // config, so it can't leak into a publish.
-    const boot = injectAnalyzer(dir, appDir);
-    if (boot)
-      log(
-        `session ${row.id}: analyzer injected (${boot.framework}${
-          'configPath' in boot ? `: ${boot.configPath}` : ''
-        })`
-      );
+    const boot = injectAnalyzer(dir);
+    if (!boot) throw new Error('The preview analyzer is missing on the server.');
+    log(
+      `session ${row.id}: analyzer injected (${boot.framework}: ${boot.configPath})`
+    );
 
     const port = await allocatePort();
-    const child = spawnDevServer(appDir, port, boot);
+    const child = spawnDevServer(dir, port, boot);
     bootOutput = captureOutput(child);
     const session: LiveSession = {
       id: row.id,
       repoId: row.repoId,
       dir,
-      appDir,
       boot,
       port,
       child,
@@ -341,9 +272,9 @@ export const startSession = async (row: SessionRow) => {
     // error, missing binding, OOM) — "exited while starting" alone is useless.
     const tail = sanitize(bootOutput());
     const message = sanitize((error as Error).message || 'unknown error');
-    const needsConfig = error instanceof AppDirConfigError;
+    const unsupported = error instanceof UnsupportedProjectError;
     log(
-      `session ${row.id}: ${needsConfig ? 'needs config' : 'failed'} — ${message}${
+      `session ${row.id}: failed — ${message}${
         tail ? `\n--- dev server output ---\n${tail}` : ''
       }`
     );
@@ -353,10 +284,10 @@ export const startSession = async (row: SessionRow) => {
       session.child.kill('SIGKILL');
       live.delete(row.id);
     }
-    // A config problem is admin-fixable, not a crash — surface the plain message
-    // so the hub can tell the client to ask their admin (and retry after).
-    await setStatus(row.id, needsConfig ? 'needs_config' : 'failed', {
-      error: needsConfig
+    // An unsupported project isn't a crash — its message is already
+    // client-facing, so it goes through un-prefixed.
+    await setStatus(row.id, 'failed', {
+      error: unsupported
         ? message.slice(0, 500)
         : `The preview could not start: ${
             tail ? salientError(tail) : message.slice(0, 300)

@@ -1,14 +1,8 @@
 import { readdir } from 'fs/promises';
-import { join, relative } from 'path';
+import { join } from 'path';
 
 // DB-free helpers shared by attachments.ts (needs the DB) and repo-context /
 // prompt-context (unit-tested without a DATABASE_URL).
-
-/** `public` for root apps, `<appDir>/public` for subfolder apps. */
-export const publicRelFor = (dir: string, appDir: string) => {
-  const appDirRel = relative(dir, appDir).split('\\').join('/');
-  return appDirRel ? `${appDirRel}/public` : 'public';
-};
 
 export const IMAGE_FILE = /\.(webp|jpe?g|png|gif|avif|svg)$/i;
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build']);
@@ -16,11 +10,11 @@ const SKIP_DIRS = new Set(['node_modules', 'dist', 'build']);
 /**
  * Folders that already hold images, so placement can follow the site's own
  * conventions ("public/images/projects (14 files)"). Cheap readdir, bounded
- * depth, top 20 by count. Paths are repo-root-relative; publicRel already
- * carries the app subfolder prefix when there is one.
+ * depth, top 20 by count. Paths are repo-root-relative (publicRel is `public`,
+ * or '' for static repos).
  */
 export const listImageDirHints = async (
-  appDir: string,
+  dir: string,
   publicRel: string
 ): Promise<Array<{ dir: string; count: number }>> => {
   const counts = new Map<string, number>();
@@ -43,14 +37,14 @@ export const listImageDirHints = async (
   };
   if (publicRel.endsWith('public')) {
     const srcRel = publicRel.replace(/public$/, 'src');
-    await walk(join(appDir, 'public'), publicRel, 0);
-    await walk(join(appDir, 'src'), srcRel, 0);
+    await walk(join(dir, 'public'), publicRel, 0);
+    await walk(join(dir, 'src'), srcRel, 0);
   } else {
-    // Static repos serve from the app dir itself ('' for root apps): walk the
-    // conventional root image folders instead of a public/ that doesn't exist.
+    // Static repos serve from the repo root (''): walk the conventional root
+    // image folders instead of a public/ that doesn't exist.
     for (const name of ['images', 'img', 'assets', 'uploads', 'media']) {
       await walk(
-        join(appDir, name),
+        join(dir, name),
         publicRel ? `${publicRel}/${name}` : name,
         0
       );

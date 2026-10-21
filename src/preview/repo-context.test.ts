@@ -42,7 +42,7 @@ const astroFixture = async () => {
 
 test('buildRepoContext maps Astro routes to files and lists site facts', async () => {
   const dir = await astroFixture();
-  const ctx = await buildRepoContext(dir, dir);
+  const ctx = await buildRepoContext(dir);
   assert.equal(ctx.framework, 'astro');
   assert.equal(ctx.routes.get('/'), 'src/pages/index.astro');
   assert.equal(ctx.routes.get('/about'), 'src/pages/about.astro');
@@ -64,46 +64,33 @@ test('buildRepoContext maps Astro routes to files and lists site facts', async (
 test('buildRepoContext falls back to CLAUDE.md and omits the notes block when neither exists', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cp-repo-'));
   await writeFile(join(dir, 'package.json'), '{}');
-  assert.equal((await buildRepoContext(dir, dir)).agentNotes, '');
-  assert.doesNotMatch((await buildRepoContext(dir, dir)).text, /Developer notes/);
+  assert.equal((await buildRepoContext(dir)).agentNotes, '');
+  assert.doesNotMatch((await buildRepoContext(dir)).text, /Developer notes/);
   await writeFile(join(dir, 'CLAUDE.md'), 'Only claude notes');
-  assert.equal((await buildRepoContext(dir, dir)).agentNotes, 'Only claude notes');
+  assert.equal((await buildRepoContext(dir)).agentNotes, 'Only claude notes');
 });
 
-test('buildRepoContext prefixes paths for a subfolder app', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'cp-repo-'));
-  await mkdir(join(dir, 'site/src/pages'), { recursive: true });
-  await writeFile(join(dir, 'site/package.json'), '{"dependencies":{"astro":"^5"}}');
-  await writeFile(join(dir, 'site/src/pages/index.astro'), '<h1/>');
-  const ctx = await buildRepoContext(dir, join(dir, 'site'));
-  assert.equal(ctx.routes.get('/'), 'site/src/pages/index.astro');
-  assert.equal(ctx.publicRel, 'site/public');
-});
+// DELIBERATE CHANGE (root-only sites): app-folder override removed; the
+// subfolder-prefix case went with it.
 
-test('buildRepoContext handles Next app + pages routers', async () => {
+// DELIBERATE CHANGE (static-only pivot): Next.js App/Pages router maps were
+// removed with Next support. A Next repo now maps no framework routes.
+test('buildRepoContext no longer maps Next app/pages routers (Next unsupported)', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cp-repo-'));
   const files: Record<string, string> = {
     'package.json': '{"dependencies":{"next":"15"}}',
     'app/page.tsx': '',
     'app/(marketing)/about/page.tsx': '',
-    'app/blog/[slug]/page.tsx': '',
-    'app/layout.tsx': '',
     'pages/contact.tsx': '',
-    'pages/_app.tsx': '',
-    'pages/api/x.ts': '',
   };
   for (const [rel, content] of Object.entries(files)) {
     await mkdir(join(dir, rel, '..'), { recursive: true });
     await writeFile(join(dir, rel), content);
   }
-  const ctx = await buildRepoContext(dir, dir);
-  assert.equal(ctx.framework, 'next');
-  assert.equal(ctx.routes.get('/'), 'app/page.tsx');
-  assert.equal(ctx.routes.get('/about'), 'app/(marketing)/about/page.tsx');
-  assert.equal(ctx.routes.get('/blog/[slug]'), 'app/blog/[slug]/page.tsx');
-  assert.equal(ctx.routes.get('/contact'), 'pages/contact.tsx');
-  assert.equal(ctx.routes.has('/_app'), false);
-  assert.equal(ctx.routes.has('/api/x'), false);
+  const ctx = await buildRepoContext(dir);
+  assert.equal(ctx.framework, null);
+  assert.equal(ctx.routes.has('/about'), false);
+  assert.equal(ctx.routes.has('/contact'), false);
 });
 
 test('resolvePageFile matches exact and dynamic routes', () => {
@@ -136,7 +123,7 @@ test('routeMentionedIn finds a page named in the message, never the current one'
 
 test('collectPageBundle inlines the page plus its content components only', async () => {
   const dir = await astroFixture();
-  const bundle = await collectPageBundle(dir, dir, 'src/pages/about.astro', 40_000);
+  const bundle = await collectPageBundle(dir, 'src/pages/about.astro', 40_000);
   assert.ok(bundle);
   assert.deepEqual(
     bundle.files.map((f) => f.path),
@@ -150,12 +137,12 @@ test('collectPageBundle respects the byte budget and reports omissions', async (
   const dir = await astroFixture();
   // Room for the page itself but not for the component it imports.
   const pageLength = (await readFile(join(dir, 'src/pages/about.astro'), 'utf8')).length;
-  const tight = await collectPageBundle(dir, dir, 'src/pages/about.astro', pageLength + 5);
+  const tight = await collectPageBundle(dir, 'src/pages/about.astro', pageLength + 5);
   assert.ok(tight);
   assert.deepEqual(tight.files.map((f) => f.path), ['src/pages/about.astro']);
   assert.deepEqual(tight.omitted, ['src/components/about/story.astro']);
-  assert.equal(await collectPageBundle(dir, dir, 'src/pages/about.astro', 10), null);
-  assert.equal(await collectPageBundle(dir, dir, 'src/pages/nope.astro', 1000), null);
+  assert.equal(await collectPageBundle(dir, 'src/pages/about.astro', 10), null);
+  assert.equal(await collectPageBundle(dir, 'src/pages/nope.astro', 1000), null);
 });
 
 // ------------------------------------------------- value-position mentions (2026-10-18)

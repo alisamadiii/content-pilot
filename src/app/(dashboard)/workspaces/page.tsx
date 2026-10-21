@@ -3,27 +3,18 @@ import { db } from '@/db';
 import { appSetting } from '@/db/schema';
 import { repoColor } from '@/lib/repo-color';
 import { listWorkspaces } from '@/lib/repos';
-import {
-  AppDirForm,
-  DeleteCloneButton,
-  GeminiTierForm,
-  ProviderForm,
-} from './repo-actions';
+import { DeleteCloneButton, GeminiTierForm, ProviderForm } from './repo-actions';
 
 export const dynamic = 'force-dynamic';
 
 const ReposPage = async () => {
-  const [rows, appDirRows, providerRows, tierRows, domainRows] =
+  const [rows, providerRows, tierRows, domainRows] =
     await Promise.all([
       listWorkspaces(),
-      db.select().from(appSetting).where(like(appSetting.key, 'app_dir:%')),
       db.select().from(appSetting).where(like(appSetting.key, 'ai_provider:%')),
       db.select().from(appSetting).where(like(appSetting.key, 'gemini_tier:%')),
       db.select().from(appSetting).where(like(appSetting.key, 'domain:%')),
     ]);
-  const appDirs = new Map(
-    appDirRows.map((r) => [Number(r.key.slice('app_dir:'.length)), r.value])
-  );
   // Default gemini; only an explicit `claude` value selects Claude.
   const providers = new Map(
     providerRows.map((r) => [
@@ -65,7 +56,6 @@ const ReposPage = async () => {
               <th>owner</th>
               <th>repository</th>
               <th>branch</th>
-              <th>app folder</th>
               <th>domains</th>
               <th>ai</th>
               <th>gemini key</th>
@@ -99,12 +89,6 @@ const ReposPage = async () => {
                     </a>
                   </td>
                   <td className="muted">{row.branch}</td>
-                  <td>
-                    <AppDirForm
-                      repoId={row.repoId}
-                      value={appDirs.get(row.repoId) ?? ''}
-                    />
-                  </td>
                   <td className="muted">
                     {domains.get(row.repoId)?.join(', ') ?? '-'}
                   </td>

@@ -21,6 +21,8 @@ export const previewConfig = {
   idleWarnMinutes: Number(process.env.SESSION_IDLE_WARN_MINUTES) || 20,
   installTimeoutMs: Number(process.env.INSTALL_TIMEOUT_MS) || 300_000,
   devReadyTimeoutMs: Number(process.env.DEV_READY_TIMEOUT_MS) || 120_000,
+  // Publish builds (astro build / vite build) of the live site.
+  buildTimeoutMs: Number(process.env.BUILD_TIMEOUT_MS) || 600_000,
   messageTimeoutMs: Number(process.env.SESSION_MESSAGE_TIMEOUT_MS) || 600_000,
   // Match the batch jobs model (haiku) — cheap + fast for content edits. Bump
   // via SESSION_CLAUDE_MODEL if a client's edits need a stronger model.

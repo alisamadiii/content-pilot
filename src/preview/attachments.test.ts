@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chooseImageDir, publicRelFor, slugify } from './image-dirs';
+import { chooseImageDir, slugify } from './image-dirs';
 
 test('slugify makes a short kebab-case stem and drops filler words', () => {
   assert.equal(slugify('Photo of Ali Samadi, the founder'), 'ali-samadi-founder');
@@ -37,13 +37,5 @@ test('chooseImageDir falls back to images/uploads and never picks src/ or bare i
   assert.equal(chooseImageDir('more images please', generic, 'public'), 'public/images/uploads');
 });
 
-test('chooseImageDir respects the app subfolder prefix', () => {
-  const nested = [{ dir: 'site/public/images/team', count: 2 }, { dir: 'public/images/team', count: 9 }];
-  assert.equal(chooseImageDir('team photo', nested, 'site/public'), 'site/public/images/team');
-});
-
-test('publicRelFor is public for root apps and prefixed for subfolder apps', () => {
-  assert.equal(publicRelFor('/w/1', '/w/1'), 'public');
-  assert.equal(publicRelFor('/w/1', '/w/1/site'), 'site/public');
-  assert.equal(publicRelFor('/w/1', '/w/1/apps/web'), 'apps/web/public');
-});
+// DELIBERATE CHANGE (root-only sites): app-folder override removed; the
+// subfolder-prefix chooseImageDir case and publicRelFor (deleted) went with it.

@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from 'fs/promises';
 import { dirname, join, relative } from 'path';
-import { listImageDirHints, publicRelFor } from './image-dirs';
+import { listImageDirHints } from './image-dirs';
 import { detectFramework, type Framework } from './framework';
 
 /**
@@ -30,23 +30,21 @@ export type RepoContext = {
 
 /**
  * Developer-authored repo rules. AGENTS.md wins over CLAUDE.md (same content
- * in practice); repo root wins over the app folder. Inlined once into the
- * system prompt so the model never spends a tool call re-reading it per
- * message. Capped: these files are rules, not manuals.
+ * in practice), read from the repo root. Inlined once into the system prompt
+ * so the model never spends a tool call re-reading it per message. Capped:
+ * these files are rules, not manuals.
  */
 export const MAX_AGENT_NOTES_CHARS = 6_000;
-const readAgentNotes = async (dir: string, appDir: string): Promise<string> => {
-  for (const base of dir === appDir ? [dir] : [dir, appDir]) {
-    for (const name of ['AGENTS.md', 'CLAUDE.md']) {
-      try {
-        const raw = (await readFile(join(base, name), 'utf8')).trim();
-        if (!raw) continue;
-        return raw.length > MAX_AGENT_NOTES_CHARS
-          ? `${raw.slice(0, MAX_AGENT_NOTES_CHARS)}\n…(truncated)`
-          : raw;
-      } catch {
-        // next candidate
-      }
+const readAgentNotes = async (dir: string): Promise<string> => {
+  for (const name of ['AGENTS.md', 'CLAUDE.md']) {
+    try {
+      const raw = (await readFile(join(dir, name), 'utf8')).trim();
+      if (!raw) continue;
+      return raw.length > MAX_AGENT_NOTES_CHARS
+        ? `${raw.slice(0, MAX_AGENT_NOTES_CHARS)}\n…(truncated)`
+        : raw;
+    } catch {
+      // next candidate
     }
   }
   return '';
@@ -100,9 +98,6 @@ const exists = async (path: string) => {
 };
 
 const PAGE_EXT = /\.(astro|md|mdx|html)$/;
-const NEXT_PAGE = /(^|\/)page\.(tsx|jsx|ts|js|mdx)$/;
-const NEXT_PAGES_SKIP = /(^|\/)(_app|_document|_error|api\/)/;
-const NEXT_PAGES_EXT = /\.(tsx|jsx|ts|js|mdx)$/;
 
 const stripExt = (file: string) => file.replace(/\.[^./]+$/, '');
 const toRoute = (segments: string[]) => {
@@ -116,48 +111,20 @@ const toRoute = (segments: string[]) => {
  */
 export const collectRoutes = async (
   dir: string,
-  appDir: string,
   framework: Framework | null
 ): Promise<Map<string, string>> => {
   const routes = new Map<string, string>();
-  const appRel = toPosix(relative(dir, appDir));
-  const rel = (p: string) => (appRel ? `${appRel}/${p}` : p);
   const add = (route: string, file: string) => {
-    if (!routes.has(route)) routes.set(route, rel(file));
+    if (!routes.has(route)) routes.set(route, file);
   };
 
   if (framework === 'astro') {
     const files: string[] = [];
-    await walkFiles(appDir, join(appDir, 'src', 'pages'), 0, files, 400);
+    await walkFiles(dir, join(dir, 'src', 'pages'), 0, files, 400);
     for (const file of files) {
       if (!PAGE_EXT.test(file)) continue;
       const inner = file.replace(/^src\/pages\//, '');
       add(toRoute(stripExt(inner).split('/')), file);
-    }
-    return routes;
-  }
-
-  if (framework === 'next') {
-    for (const appRoot of ['src/app', 'app']) {
-      const files: string[] = [];
-      await walkFiles(appDir, join(appDir, appRoot), 0, files, 400);
-      for (const file of files) {
-        if (!NEXT_PAGE.test(file)) continue;
-        const inner = dirname(file.replace(`${appRoot}/`, ''));
-        const segments = (inner === '.' ? [] : inner.split('/')).filter(
-          (segment) => !/^\(.*\)$/.test(segment) && !/^@/.test(segment)
-        );
-        add(toRoute(segments), file);
-      }
-    }
-    for (const pagesRoot of ['src/pages', 'pages']) {
-      const files: string[] = [];
-      await walkFiles(appDir, join(appDir, pagesRoot), 0, files, 400);
-      for (const file of files) {
-        const inner = file.replace(`${pagesRoot}/`, '');
-        if (!NEXT_PAGES_EXT.test(inner) || NEXT_PAGES_SKIP.test(inner)) continue;
-        add(toRoute(stripExt(inner).split('/')), file);
-      }
     }
     return routes;
   }
@@ -167,7 +134,7 @@ export const collectRoutes = async (
     // /index, so index.html → /, about.html → /about, about/index.html → /about
     // (first add wins when both shapes exist).
     const files: string[] = [];
-    await walkFiles(appDir, appDir, 0, files, 1000);
+    await walkFiles(dir, dir, 0, files, 1000);
     for (const file of files) {
       if (!file.endsWith('.html')) continue;
       add(toRoute(stripExt(file).split('/')), file);
@@ -175,9 +142,9 @@ export const collectRoutes = async (
     return routes;
   }
 
-  // Vite / unknown: a single index.html (or src/index.html).
+  // Vite: a single index.html (or src/index.html).
   for (const candidate of ['index.html', 'src/index.html']) {
-    if (await exists(join(appDir, candidate))) {
+    if (await exists(join(dir, candidate))) {
       add('/', candidate);
       break;
     }
@@ -192,7 +159,7 @@ export const resolvePageFile = (
 ): string | null => {
   // Static sites navigate by file URL (the overlay posts location.pathname
   // verbatim): /about.html, /about/, /about/index.html all mean the /about
-  // route. Safe for astro/next too — their route keys never end in .html.
+  // route. Safe for astro too — their route keys never end in .html.
   const path =
     pagePath
       .replace(/\/+$/, '')
@@ -262,16 +229,15 @@ const QUOTED_SPAN = /["“”'‘’][^"“”'‘’]{2,}["“”'‘’]/g;
 const VALUE_LEAD_IN =
   /\b(?:to|into|say|says|saying|read|reads|reading|as|called|named|titled|with|be|become|becomes)\s*(?:the\s+|a\s+|an\s+)?[:"“'‘]?\s*$/i;
 
-const listComponents = async (dir: string, appDir: string) => {
-  const appRel = toPosix(relative(dir, appDir));
+const listComponents = async (dir: string) => {
   const out: string[] = [];
   for (const folder of ['src/components', 'src/sections', 'components']) {
     const files: string[] = [];
-    await walkFiles(appDir, join(appDir, folder), 0, files, COMPONENT_LIST_CAP);
+    await walkFiles(dir, join(dir, folder), 0, files, COMPONENT_LIST_CAP);
     for (const file of files) {
       if (!/\.(astro|tsx|jsx|vue|svelte)$/.test(file)) continue;
       if (/(^|\/)ui\//.test(file)) continue; // design-system primitives
-      out.push(appRel ? `${appRel}/${file}` : file);
+      out.push(file);
       if (out.length >= COMPONENT_LIST_CAP) return out;
     }
   }
@@ -345,23 +311,17 @@ const renderText = (ctx: Omit<RepoContext, 'text'>) => {
   return lines.join('\n');
 };
 
-export const buildRepoContext = async (
-  dir: string,
-  appDir: string
-): Promise<RepoContext> => {
-  const framework = detectFramework(appDir);
+export const buildRepoContext = async (dir: string): Promise<RepoContext> => {
+  const framework = detectFramework(dir);
   // Static sites have no public/ convention — assets are served straight from
-  // the app dir ('' for root apps), so images land next to the pages.
-  const publicRel =
-    framework === 'static'
-      ? toPosix(relative(dir, appDir))
-      : publicRelFor(dir, appDir);
+  // the repo root (''), so images land next to the pages.
+  const publicRel = framework === 'static' ? '' : 'public';
   const [routes, components, cmsFiles, imageDirs, agentNotes] = await Promise.all([
-    collectRoutes(dir, appDir, framework),
-    listComponents(dir, appDir),
+    collectRoutes(dir, framework),
+    listComponents(dir),
     listCmsFiles(dir),
-    listImageDirHints(appDir, publicRel),
-    readAgentNotes(dir, appDir),
+    listImageDirHints(dir, publicRel),
+    readAgentNotes(dir),
   ]);
   const partial = {
     framework,
@@ -388,12 +348,11 @@ const PIN_SKIP = /(^|\/)(ui|icons)\//;
 const resolveImport = async (
   spec: string,
   fromFile: string,
-  dir: string,
-  appDir: string
+  dir: string
 ): Promise<string | null> => {
   let base: string;
   if (spec.startsWith('@/') || spec.startsWith('~/')) {
-    base = join(appDir, 'src', spec.slice(2));
+    base = join(dir, 'src', spec.slice(2));
   } else if (spec.startsWith('./') || spec.startsWith('../')) {
     base = join(dir, dirname(fromFile), spec);
   } else {
@@ -424,7 +383,6 @@ export type PageBundle = {
  */
 export const collectPageBundle = async (
   dir: string,
-  appDir: string,
   pageFile: string,
   budget: number
 ): Promise<PageBundle | null> => {
@@ -440,7 +398,7 @@ export const collectPageBundle = async (
   let used = page.length;
   const seen = new Set([pageFile]);
   for (const match of page.matchAll(IMPORT_RE)) {
-    const resolved = await resolveImport(match[1], pageFile, dir, appDir);
+    const resolved = await resolveImport(match[1], pageFile, dir);
     if (!resolved || seen.has(resolved)) continue;
     seen.add(resolved);
     if (!PIN_WORTHY.test(resolved) || PIN_SKIP.test(resolved)) continue;

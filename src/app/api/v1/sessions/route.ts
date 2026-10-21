@@ -254,17 +254,17 @@ export const GET = async (request: Request) => {
   if (auth.kind === 'edit-token' && auth.payload.repoId !== repoId) {
     return Response.json({ error: 'Forbidden' }, { status: 403, headers });
   }
-  // Failed and needs-config sessions are returned too (newest first) so the hub
-  // can show the client-facing error / "ask your admin" panel instead of
-  // silently resetting; closing one from the UI marks it 'closed' and clears it
-  // from this lookup. needs_config isn't live, so a retry makes a fresh session.
+  // Failed sessions are returned too (newest first) so the hub can show the
+  // client-facing error instead of silently resetting; closing one from the UI
+  // marks it 'closed' and clears it from this lookup. Failed isn't live, so a
+  // retry makes a fresh session.
   const [row] = await db
     .select()
     .from(previewSession)
     .where(
       and(
         eq(previewSession.repoId, repoId),
-        inArray(previewSession.status, [...LIVE, 'paused', 'failed', 'needs_config'])
+        inArray(previewSession.status, [...LIVE, 'paused', 'failed'])
       )
     )
     .orderBy(desc(previewSession.createdAt))

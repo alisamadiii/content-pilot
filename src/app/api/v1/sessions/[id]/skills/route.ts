@@ -1,7 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db } from '@/db';
 import { previewSession } from '@/db/schema';
-import { getAppDir } from '@/lib/settings';
 import {
   authenticateSessionRequest,
   sessionCorsHeaders,
@@ -18,8 +17,7 @@ export const OPTIONS = async (request: Request) => {
 
 /**
  * Lists the skills available in the session repo's workspace clone (root
- * `.claude/skills/` plus the admin-set app folder's, root winning on name
- * clashes) — powers the hub chat's "/" menu. The clone persists across
+ * `.claude/skills/`) — powers the hub chat's "/" menu. The clone persists across
  * paused sessions; an empty list just means it hasn't been cloned yet.
  */
 export const GET = async (
@@ -44,7 +42,7 @@ export const GET = async (
     return Response.json({ error: 'Forbidden' }, { status: 403, headers });
   }
 
-  const skills = await listSkills(repoDir(row.repoId), await getAppDir(row.repoId));
+  const skills = await listSkills(repoDir(row.repoId));
   return Response.json(
     { skills },
     { status: 200, headers }

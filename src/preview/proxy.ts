@@ -76,7 +76,7 @@ const unpublishedPage = `<!doctype html><meta charset="utf-8"><title>Not publish
 <div style="text-align:center"><h1 style="font-size:1.25rem">This site hasn't been published yet</h1>
 <p style="color:#666">Publish it from the editor and it will appear here.</p></div></body>`;
 
-// Live-site serving for uploaded projects: `site-<repoId>` Host labels map to
+// Live-site serving for every project: `site-<repoId>` Host labels map to
 // the published snapshot on disk (see live-serve.ts). One serve-static
 // instance per repoId — the root path is constant and files are re-read from
 // disk per request, so publish swaps need no invalidation.
@@ -88,6 +88,10 @@ const liveServerFor = (repoId: number) => {
     server = serveStatic(liveServeRoot(repoId), {
       dotfiles: 'deny',
       index: ['index.html'],
+      // Clean URLs, like every static host: /gallery serves gallery.html
+      // (Astro build.format 'file', plain multi-page HTML sites). Dev servers
+      // already resolve these, so without it a page works in preview only.
+      extensions: ['html'],
       // Previews and live sites sit behind Cloudflare; published state must
       // reflect a publish instantly, so nothing may edge-cache.
       setHeaders: (res) => res.setHeader('cache-control', 'no-store'),
@@ -111,7 +115,18 @@ const serveLiveRepo = (
     res.end(unpublishedPage);
     return;
   }
-  liveServerFor(repoId)(req, res, finalhandler(req, res));
+  liveServerFor(repoId)(req, res, () => notFound(req, res, repoId));
+};
+
+/** A real miss: the site's own 404.html when it ships one, else plain 404. */
+const notFound = (req: IncomingMessage, res: ServerResponse, repoId: number) => {
+  const page = join(liveServeRoot(repoId), '404.html');
+  if (req.method === 'GET' && existsSync(page)) {
+    res.writeHead(404, { 'Content-Type': 'text/html', 'cache-control': 'no-store' });
+    res.end(readFileSync(page));
+    return;
+  }
+  finalhandler(req, res)(undefined);
 };
 
 /** Handles a `site-<id>` live-site request; true when the label matched one. */

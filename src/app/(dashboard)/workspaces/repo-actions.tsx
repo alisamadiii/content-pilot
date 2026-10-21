@@ -1,12 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import {
-  deleteRepoClone,
-  setAppDir,
-  setGeminiTier,
-  setProvider,
-} from './actions';
+import { deleteRepoClone, setGeminiTier, setProvider } from './actions';
 
 export const ProviderForm = ({
   repoId,
@@ -89,52 +84,6 @@ export const GeminiTierForm = ({
         <option value="paid">Paid</option>
       </select>
       {pending && <span className="muted" style={{ fontSize: 12 }}>...</span>}
-      {error && (
-        <span className="error-text" style={{ fontSize: 12 }}>
-          {error}
-        </span>
-      )}
-    </div>
-  );
-};
-
-export const AppDirForm = ({
-  repoId,
-  value,
-}: {
-  repoId: number;
-  value: string;
-}) => {
-  const [pending, startTransition] = useTransition();
-  const [input, setInput] = useState(value);
-  const [error, setError] = useState<string | null>(null);
-  const dirty = input.trim() !== value;
-  return (
-    <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-      <input
-        type="text"
-        value={input}
-        placeholder="auto"
-        disabled={pending}
-        onChange={(e) => setInput(e.target.value)}
-        style={{ width: 120 }}
-      />
-      <button
-        type="button"
-        disabled={pending || !dirty}
-        onClick={() => {
-          setError(null);
-          startTransition(async () => {
-            try {
-              await setAppDir(repoId, input);
-            } catch (e) {
-              setError(e instanceof Error ? e.message : 'Could not save.');
-            }
-          });
-        }}
-      >
-        {pending ? '...' : 'save'}
-      </button>
       {error && (
         <span className="error-text" style={{ fontSize: 12 }}>
           {error}

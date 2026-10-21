@@ -13,17 +13,12 @@ import {
 } from '@/db/schema';
 import { auth } from '@/lib/auth';
 import {
-  appDirKey,
   geminiTierKey,
   providerKey,
   removeAllDomainsForRepo,
   setSetting,
 } from '@/lib/settings';
-import {
-  normalizeGeminiTier,
-  normalizeProvider,
-  sanitizeAppDir,
-} from '@/lib/settings-rules';
+import { normalizeGeminiTier, normalizeProvider } from '@/lib/settings-rules';
 import { removeLiveSnapshot } from '@/preview/live-serve';
 import { config } from '@/worker/config';
 
@@ -82,22 +77,6 @@ export const deleteRepoClone = async (repoId: number) => {
   } catch {
     // The supervisor also refreshes on an interval.
   }
-  revalidatePath('/workspaces');
-};
-
-/**
- * Sets (or clears) the app subfolder a preview session should run in for a repo
- * whose site lives in a subdirectory (e.g. empowerher's `marketing/`). Empty
- * clears the override — the session then auto-detects the app dir.
- */
-export const setAppDir = async (repoId: number, value: string) => {
-  await requireSession();
-  if (!Number.isInteger(repoId) || repoId <= 0) {
-    throw new Error('Invalid repo id.');
-  }
-  // Throws the client-facing message for traversal/absolute paths.
-  const cleaned = sanitizeAppDir(value) ?? '';
-  await setSetting(appDirKey(repoId), cleaned);
   revalidatePath('/workspaces');
 };
 

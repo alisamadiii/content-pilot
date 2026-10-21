@@ -48,7 +48,7 @@ test('buildPinnedFile inlines the clicked file content with a hard directive', a
   const dir = await mkdtemp(join(tmpdir(), 'cp-pin-'));
   await mkdir(join(dir, 'src'), { recursive: true });
   await writeFile(join(dir, 'src/x.astro'), 'const stats = [{ target: 10 }]');
-  const block = await buildPinnedFile('source: src/x.astro:3', dir, dir);
+  const block = await buildPinnedFile('source: src/x.astro:3', dir);
   assert.match(block, /src\/x\.astro/);
   assert.match(block, /line 3/);
   assert.match(block, /const stats = \[\{ target: 10 \}\]/);
@@ -57,16 +57,16 @@ test('buildPinnedFile inlines the clicked file content with a hard directive', a
 
 test('buildPinnedFile returns empty when the file is missing or oversized', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cp-pin-'));
-  assert.equal(await buildPinnedFile('source: src/missing.astro:1', dir, dir), '');
+  assert.equal(await buildPinnedFile('source: src/missing.astro:1', dir), '');
   await mkdir(join(dir, 'src'), { recursive: true });
   await writeFile(join(dir, 'src/big.astro'), 'x'.repeat(40_001));
-  assert.equal(await buildPinnedFile('source: src/big.astro:1', dir, dir), '');
+  assert.equal(await buildPinnedFile('source: src/big.astro:1', dir), '');
 });
 
 test('buildPinnedFile returns empty when there is no element ref and no routes', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cp-pin-'));
-  assert.equal(await buildPinnedFile('just a page edit', dir, dir), '');
-  assert.equal(await buildPinnedFile(null, dir, dir), '');
+  assert.equal(await buildPinnedFile('just a page edit', dir), '');
+  assert.equal(await buildPinnedFile(null, dir), '');
 });
 
 const pageFixture = async () => {
@@ -91,7 +91,6 @@ test('buildPinnedFile pins the viewed page and its components when nothing was c
   const block = await buildPinnedFile(
     'The client is editing this page: http://x.localhost:3020/about',
     dir,
-    dir,
     { message: 'change the intro', routes }
   );
   assert.match(block, /The client is viewing the page `\/about`, rendered by `src\/pages\/about\.astro`/);
@@ -106,7 +105,6 @@ test('buildPinnedFile prefers a page named in the message over the viewed one', 
   const block = await buildPinnedFile(
     'The client is editing this page: http://x.localhost:3020/',
     dir,
-    dir,
     { message: 'add this image to the about page', routes }
   );
   assert.match(block, /The request is about the page `\/about`/);
@@ -115,13 +113,13 @@ test('buildPinnedFile prefers a page named in the message over the viewed one', 
 
 test('buildPinnedFile pins the home page by default and the clicked file first', async () => {
   const { dir, routes } = await pageFixture();
-  const home = await buildPinnedFile(null, dir, dir, { message: 'change the title', routes });
+  const home = await buildPinnedFile(null, dir, { message: 'change the title', routes });
   assert.match(home, /rendered by `src\/pages\/index\.astro`/);
   // Chat is not an edit request: nothing pinned.
-  assert.equal(await buildPinnedFile(null, dir, dir, { message: 'hi', routes }), '');
-  assert.equal(await buildPinnedFile(null, dir, dir, { message: 'thanks a lot, looks great', routes }), '');
+  assert.equal(await buildPinnedFile(null, dir, { message: 'hi', routes }), '');
+  assert.equal(await buildPinnedFile(null, dir, { message: 'thanks a lot, looks great', routes }), '');
   assert.equal(
-    await buildPinnedFile(null, dir, dir, {
+    await buildPinnedFile(null, dir, {
       message: 'there is no need to read the agents.md file right now. Did you read it before the session',
       routes,
     }),
@@ -129,7 +127,6 @@ test('buildPinnedFile pins the home page by default and the clicked file first',
   );
   const clicked = await buildPinnedFile(
     'editing this page: http://x.localhost:3020/\nsource: src/components/about/story.astro:1',
-    dir,
     dir,
     { message: 'about page', routes }
   );
@@ -164,15 +161,15 @@ test('looksLikeEdit: edit verbs, corrections, quotes and attachments count; chat
 test('buildPinnedFile pins for an edit-like message or an attachment, never for chat', async () => {
   const { dir, routes } = await pageFixture();
   assert.match(
-    await buildPinnedFile(null, dir, dir, { message: 'the title should say Hello', routes }),
+    await buildPinnedFile(null, dir, { message: 'the title should say Hello', routes }),
     /rendered by `src\/pages\/index\.astro`/
   );
   assert.match(
-    await buildPinnedFile(null, dir, dir, { message: 'this one', routes, hasAttachments: true }),
+    await buildPinnedFile(null, dir, { message: 'this one', routes, hasAttachments: true }),
     /rendered by `src\/pages\/index\.astro`/
   );
   assert.equal(
-    await buildPinnedFile(null, dir, dir, { message: 'what can you do for me?', routes }),
+    await buildPinnedFile(null, dir, { message: 'what can you do for me?', routes }),
     ''
   );
 });

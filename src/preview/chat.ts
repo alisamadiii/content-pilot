@@ -326,7 +326,7 @@ const processMessage = async (row: MessageRow) => {
     // Repo facts (page → file map, CMS files, image folders) from a cheap fs
     // scan: they feed the Gemini system prompt and pin-by-page below. Rebuilt
     // per message so files added by earlier edits show up.
-    const repo = await buildRepoContext(session.dir, session.appDir);
+    const repo = await buildRepoContext(session.dir);
     const systemPromptPath =
       provider === 'gemini'
         ? await writeGeminiSystemPrompt(row.sessionId, repo)
@@ -358,7 +358,7 @@ const processMessage = async (row: MessageRow) => {
       );
     }
     if (invocation && provider === 'gemini') {
-      const skill = await loadSkill(session.dir, session.appDir, invocation.name);
+      const skill = await loadSkill(session.dir, invocation.name);
       if (skill) {
         skillBlock = buildSkillBlock(skill, invocation.rest);
         request = invocation.rest || bareSkillRequest(skill.name);
@@ -374,7 +374,7 @@ const processMessage = async (row: MessageRow) => {
     const pinned =
       skillBlock && !parseSourceRef(row.context)
         ? null
-        : await collectPinned(row.context, session.dir, session.appDir, {
+        : await collectPinned(row.context, session.dir, {
             message: row.content,
             routes: repo.routes,
             hasAttachments: attachments.length > 0,
@@ -397,7 +397,6 @@ const processMessage = async (row: MessageRow) => {
     const placed: Placed[] = attachments.length
       ? await planPlacements({
           dir: session.dir,
-          appDir: session.appDir,
           publicRel: repo.publicRel,
           attachments,
         })

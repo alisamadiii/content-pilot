@@ -29,7 +29,7 @@ const staticFixture = async () => {
 
 test('collectRoutes (static): every .html file becomes a page', async () => {
   const dir = await staticFixture();
-  const routes = await collectRoutes(dir, dir, 'static');
+  const routes = await collectRoutes(dir, 'static');
   assert.deepEqual(
     [...routes.entries()].sort(),
     [
@@ -42,7 +42,7 @@ test('collectRoutes (static): every .html file becomes a page', async () => {
 
 test('resolvePageFile normalizes the .html URLs the overlay posts', async () => {
   const dir = await staticFixture();
-  const routes = await collectRoutes(dir, dir, 'static');
+  const routes = await collectRoutes(dir, 'static');
   assert.equal(resolvePageFile(routes, '/'), 'index.html');
   assert.equal(resolvePageFile(routes, '/index.html'), 'index.html');
   assert.equal(resolvePageFile(routes, '/about.html'), 'about.html');
@@ -54,7 +54,7 @@ test('resolvePageFile normalizes the .html URLs the overlay posts', async () => 
 
 test('buildRepoContext (static root): framework static, empty publicRel, root image hints', async () => {
   const dir = await staticFixture();
-  const ctx = await buildRepoContext(dir, dir);
+  const ctx = await buildRepoContext(dir);
   assert.equal(ctx.framework, 'static');
   assert.equal(ctx.publicRel, '');
   assert.ok(ctx.routes.size >= 3);
@@ -64,12 +64,5 @@ test('buildRepoContext (static root): framework static, empty publicRel, root im
   assert.match(ctx.text, /- \/about → about\.html/);
 });
 
-test('buildRepoContext (static in app-folder override): publicRel is the subfolder', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'cp-static-sub-'));
-  await mkdir(join(root, 'site'), { recursive: true });
-  await writeFile(join(root, 'site/index.html'), '<h1>hi</h1>');
-  const ctx = await buildRepoContext(root, join(root, 'site'));
-  assert.equal(ctx.framework, 'static');
-  assert.equal(ctx.publicRel, 'site');
-  assert.deepEqual([...ctx.routes.entries()], [['/', 'site/index.html']]);
-});
+// DELIBERATE CHANGE (root-only sites): app-folder override removed; the
+// static-in-subfolder publicRel case went with it.

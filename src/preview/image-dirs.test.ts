@@ -5,7 +5,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { IMAGE_FILE, listImageDirHints } from './image-dirs';
 
-// slugify / chooseImageDir / publicRelFor are covered in attachments.test.ts.
+// slugify / chooseImageDir are covered in attachments.test.ts.
 
 const seed = async (files: string[]) => {
   const dir = await mkdtemp(join(tmpdir(), 'cp-imgdirs-'));
@@ -53,13 +53,8 @@ test('dot folders, node_modules, dist and build are skipped; depth is bounded at
   ]);
 });
 
-test('paths carry the app-subfolder prefix for both public and src', async () => {
-  const dir = await seed(['site/public/img/a.png', 'site/src/assets/b.png']);
-  assert.deepEqual(await listImageDirHints(join(dir, 'site'), 'site/public'), [
-    { dir: 'site/public/img', count: 1 },
-    { dir: 'site/src/assets', count: 1 },
-  ]);
-});
+// DELIBERATE CHANGE (root-only sites): app-folder override removed; the
+// subfolder-prefix case went with it.
 
 test('result is capped at the top 20 folders', async () => {
   const files: string[] = [];
@@ -72,6 +67,6 @@ test('result is capped at the top 20 folders', async () => {
   assert.equal(hints[1].dir, 'public/f00');
 });
 
-test('a missing app folder yields an empty list instead of throwing', async () => {
+test('a missing site dir yields an empty list instead of throwing', async () => {
   assert.deepEqual(await listImageDirHints(join(tmpdir(), 'cp-imgdirs-missing'), 'public'), []);
 });

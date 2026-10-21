@@ -8,8 +8,8 @@ import { join, relative } from 'path';
  * `.gemini/skills` through its `activate_skill` tool — one extra model turn
  * per invocation plus the skill catalog in every request — so for Gemini the
  * supervisor inlines the skill body into the prompt instead and the tool stays
- * out of the set. Lookup order mirrors the skills API route: repo root wins
- * over the app subfolder; within a folder `.claude`, `.gemini`, `.agents`.
+ * out of the set. Lookup is repo root only, in order `.claude`, `.gemini`,
+ * `.agents`.
  */
 const SKILL_DIRS = ['.claude', '.gemini', '.agents'];
 export type SkillInvocation = { name: string; rest: string };
@@ -27,24 +27,21 @@ export const parseSkillInvocation = (content: string): SkillInvocation | null =>
 /** SKILL.md without its frontmatter; null when the skill does not exist. */
 export const loadSkill = async (
   dir: string,
-  appDir: string,
   name: string
 ): Promise<LoadedSkill | null> => {
   if (!/^[a-z0-9][a-z0-9_-]*$/.test(name)) return null;
-  for (const base of dir === appDir ? [dir] : [dir, appDir]) {
-    for (const skillDir of SKILL_DIRS) {
-      const folder = join(base, skillDir, 'skills', name);
-      try {
-        const raw = await readFile(join(folder, 'SKILL.md'), 'utf8');
-        const body = raw.replace(/^---\n[\s\S]*?\n---\n?/, '').trim();
-        return {
-          name,
-          body,
-          dir: relative(dir, folder).split('\\').join('/'),
-        };
-      } catch {
-        // try the next location
-      }
+  for (const skillDir of SKILL_DIRS) {
+    const folder = join(dir, skillDir, 'skills', name);
+    try {
+      const raw = await readFile(join(folder, 'SKILL.md'), 'utf8');
+      const body = raw.replace(/^---\n[\s\S]*?\n---\n?/, '').trim();
+      return {
+        name,
+        body,
+        dir: relative(dir, folder).split('\\').join('/'),
+      };
+    } catch {
+      // try the next location
     }
   }
   return null;
@@ -155,22 +152,11 @@ export const scanSkillsDir = async (base: string): Promise<SkillInfo[]> => {
   return found;
 };
 
-/**
- * Catalog for a clone: root `.claude/skills/` plus the admin-set app folder's,
- * root winning on name clashes, sorted by name.
- */
-export const listSkills = async (
-  dir: string,
-  appDir: string | null
-): Promise<SkillInfo[]> => {
+/** Catalog for a clone: the repo root's `.claude/skills/`, sorted by name. */
+export const listSkills = async (dir: string): Promise<SkillInfo[]> => {
   const skills = new Map<string, SkillInfo>();
-  if (appDir) {
-    for (const skill of await scanSkillsDir(join(dir, appDir))) {
-      skills.set(skill.name, skill);
-    }
-  }
   for (const skill of await scanSkillsDir(dir)) {
-    skills.set(skill.name, skill); // root wins
+    skills.set(skill.name, skill);
   }
   return [...skills.values()].sort((a, b) => a.name.localeCompare(b.name));
 };

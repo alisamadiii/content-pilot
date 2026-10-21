@@ -10,8 +10,15 @@ import {
 } from '@/lib/session-auth';
 import { removeSessionUploads } from '@/lib/uploads';
 import { previewConfig, previewUrlFor } from '@/preview/config';
-import { refreshLiveSnapshot } from '@/preview/live-serve';
-import { repoDir, squashIntoDefault, syncRepo } from '@/worker/git';
+import { enqueueLiveBuild } from '@/preview/live-build';
+import { hasLiveSite } from '@/preview/live-serve';
+import {
+  baseRef,
+  git,
+  repoDir,
+  squashIntoDefault,
+  syncRepo,
+} from '@/worker/git';
 
 const actionSchema = z.discriminatedUnion('action', [
   z.object({
@@ -23,8 +30,14 @@ const actionSchema = z.discriminatedUnion('action', [
   // Pause: abort the in-flight AI run, keep the session live.
   z.object({ action: z.literal('cancel') }),
   // Publish: squash the session branch into the default branch as one commit
-  // authored by the project owner, and push. The hub closes the session after.
-  z.object({ action: z.literal('publish') }),
+  // authored by the project owner, push (GitHub projects), and queue the live
+  // build. The hub closes the session after.
+  // liveBuild: false = the site is hosted elsewhere (Netlify, Vercel,
+  // Cloudflare): squash + push only, no content-pilot build.
+  z.object({
+    action: z.literal('publish'),
+    liveBuild: z.boolean().optional(),
+  }),
 ]);
 
 const loadAuthorized = async (request: Request, id: string) => {
@@ -196,13 +209,24 @@ export const POST = async (
           { status: 409, headers }
         );
       }
-      if (row.source === 'upload' && squash.changed && squash.sha) {
-        // The live site serves the published snapshot — refresh it now so the
-        // publish is visible instantly (no-op for non-static projects).
-        await refreshLiveSnapshot(row.repoId).catch(() => null);
-      }
+      // Content Pilot hosted: the live site is a build of the published commit
+      // (GitHub projects were pushed above, inside squashIntoDefault). A no-op
+      // publish still builds when the site never went live — e.g. a GitHub
+      // project's first publish without edits. Externally hosted projects
+      // (liveBuild: false) stop at the push; their host deploys.
+      const liveBuild = parsed.data.liveBuild !== false;
+      const buildSha = !liveBuild
+        ? null
+        : squash.changed && squash.sha
+          ? squash.sha
+          : !hasLiveSite(row.repoId)
+            ? await git(dir, ['rev-parse', await baseRef(dir)])
+            : null;
+      const build = buildSha
+        ? await enqueueLiveBuild(row.repoId, buildSha.trim())
+        : null;
       return Response.json(
-        { id, sha: squash.sha, changed: squash.changed },
+        { id, sha: squash.sha, changed: squash.changed, build },
         { status: 200, headers }
       );
     } catch (error) {

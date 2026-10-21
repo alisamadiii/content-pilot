@@ -26,7 +26,6 @@ export const extractCredentials = (request: Request) => {
 
 /** Session states that no longer accept chat input (messages, uploads). */
 export const TERMINAL_SESSION_STATUSES = [
-  'needs_config',
   'failed',
   'closed',
   'published',

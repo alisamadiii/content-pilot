@@ -140,8 +140,7 @@ tr:last-child td {
 }
 .status-starting,
 .status-installing,
-.status-restarting,
-.status-needs_config {
+.status-restarting {
   color: var(--yellow);
 }
 .status-closed,
@@ -274,4 +273,16 @@ button.danger {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* urls page */
+.urls-table tbody tr:hover td {
+  background: var(--bg-alt);
+}
+.kind-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  vertical-align: middle;
 }

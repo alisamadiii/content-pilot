@@ -5,44 +5,24 @@ import { join } from 'path';
 import { previewUrlFor } from './config';
 import type { BootPlan } from './framework';
 
-// Pure boot-time decisions behind sessions.ts (app folder, install cache key,
+// Pure boot-time decisions behind sessions.ts (site root, install cache key,
 // dev-server command, public endpoint, error salience). DB-free so they can be
 // unit-tested without a DATABASE_URL.
 
-/**
- * Thrown when the supervisor can't tell which folder the site lives in — a repo
- * whose root has no package.json and no admin-set app folder, or an app folder
- * that points at a folder without one. It's an admin config problem, not a
- * crash: startSession maps it to the `needs_config` status so the hub shows a
- * "ask your admin" panel instead of a scary failure, and the client can retry
- * once the app folder is fixed.
- */
-export class AppDirConfigError extends Error {}
+// Sites always live at the repo root. A root qualifies with a package.json
+// (framework repos) OR an index.html (plain static repos with no toolchain at
+// all); anything else can't be previewed or published.
+export const NO_SITE_MESSAGE =
+  "We couldn't find a site at the root of this project. Content Pilot hosts static sites: Astro, Vite, or plain HTML.";
 
-// Some client repos keep several projects in one repo (e.g. marketing/ next to
-// admin/). We never guess which subfolder is the site — a wrong guess would run
-// and even publish the wrong project. The site folder is either the repo root
-// (single-app repos, the common case) or an explicit admin-set app folder;
-// anything else stops here with a config error the admin must resolve. A folder
-// qualifies with a package.json (framework repos) OR an index.html (plain
-// static repos with no toolchain at all).
-const isSiteDir = (dir: string) =>
-  existsSync(join(dir, 'package.json')) || existsSync(join(dir, 'index.html'));
-
-export const findAppDir = (dir: string, override?: string | null) => {
-  if (override) {
-    const app = join(dir, override);
-    if (!isSiteDir(app)) {
-      throw new AppDirConfigError(
-        `The configured app folder "${override}" has no package.json or index.html — an admin needs to fix the app folder for this project.`
-      );
-    }
-    return app;
+export const assertSiteRoot = (dir: string): void => {
+  if (
+    existsSync(join(dir, 'package.json')) ||
+    existsSync(join(dir, 'index.html'))
+  ) {
+    return;
   }
-  if (isSiteDir(dir)) return dir;
-  throw new AppDirConfigError(
-    'No package.json or index.html at the repo root — if the site lives in a subfolder, an admin needs to set its app folder before it can be previewed.'
-  );
+  throw new Error(NO_SITE_MESSAGE);
 };
 
 export const INSTALL_HASH_MARKER = join('node_modules', '.cp-install-hash');
@@ -136,10 +116,44 @@ export const hasDevScript = (dir: string) => {
   }
 };
 
-// Per-framework dev-server command. Astro/Vite import a git-invisible wrapper
-// via `--config`; Next rides a programmatic server (no --config flag exists).
-// `--root .` (Astro) pins the project root to appDir so an alternate `--config`
-// in a subfolder doesn't make Astro treat that subfolder as the root.
+// Process env passed to CLIENT code (npm install scripts, dev servers, builds).
+// Allow-list, never a deny-list: the pilot's own env carries DATABASE_URL, the
+// GitHub App private key, auth secrets and AI keys, and any postinstall script
+// or config file in a client repo could read whatever we hand it.
+const USER_CODE_ENV_KEYS = [
+  'PATH',
+  'HOME',
+  'USER',
+  'SHELL',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'LANG',
+  'LC_ALL',
+  'TZ',
+  'NODE_OPTIONS',
+  'npm_config_cache',
+  'NPM_CONFIG_CACHE',
+];
+
+export const userCodeEnv = (
+  extra: Record<string, string> = {},
+  source: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv => {
+  const env: Record<string, string> = {};
+  for (const key of USER_CODE_ENV_KEYS) {
+    const value = source[key];
+    if (value !== undefined) env[key] = value;
+  }
+  // Cast: Next's type augmentation makes NODE_ENV a required ProcessEnv key;
+  // callers that need it (dev, build) pass it in `extra`.
+  return { ...env, ...extra } as NodeJS.ProcessEnv;
+};
+
+// Per-framework dev-server command. Every framework boots a git-invisible
+// wrapper via `--config` (see analyzer.ts).
+// `--root .` (Astro) pins the project root to the clone dir so the `--config`
+// wrapper living in ai-analyzer/ doesn't make Astro treat that folder as root.
 // `--ignore-lock` (Astro 7+, silently ignored by older versions) forces the dev
 // server to run in the foreground: Astro 7 detects agentic environments and
 // self-daemonizes — the spawned process exits 0 while a detached daemon serves,
@@ -147,12 +161,12 @@ export const hasDevScript = (dir: string) => {
 export const devCommand = (
   dir: string,
   port: number,
-  boot: BootPlan | null
+  boot: BootPlan
 ): { cmd: string; args: string[]; env: Record<string, string> } => {
   const p = String(port);
-  const extraEnv: Record<string, string> = { ...(boot?.extraEnv ?? {}) };
+  const extraEnv: Record<string, string> = { ...(boot.extraEnv ?? {}) };
 
-  if (boot?.framework === 'astro') {
+  if (boot.framework === 'astro') {
     const flags = [
       '--config',
       boot.configPath,
@@ -170,7 +184,7 @@ export const devCommand = (
     return { cmd, args: args as string[], env: extraEnv };
   }
 
-  if (boot?.framework === 'vite') {
+  if (boot.framework === 'vite') {
     // Run Vite directly with our wrapper config. NOT `npm run dev --`: the
     // client's dev script hardcodes its own --port, which would fight ours.
     return {
@@ -189,42 +203,22 @@ export const devCommand = (
     };
   }
 
-  if (boot?.framework === 'static') {
-    // Plain HTML/CSS/JS repo: serve it with the pilot's OWN Vite against the
-    // clone dir (spawnDevServer sets cwd=appDir, Vite's root defaults to cwd).
-    // No install ever runs in the clone, so the server is up in seconds.
-    return {
-      cmd: process.execPath,
-      args: [
-        pilotViteBin(),
-        '--config',
-        boot.configPath,
-        '--port',
-        p,
-        '--host',
-        '127.0.0.1',
-      ],
-      env: extraEnv,
-    };
-  }
-
-  if (boot?.framework === 'next') {
-    // Run `next dev` directly, not the client's script (which may add
-    // --turbopack and hardcode a port). Webpack is the default and required for
-    // our on-disk-config loader to run; turbopack would ignore it.
-    return {
-      cmd: 'npx',
-      args: ['next', 'dev', '--port', p, '--hostname', '127.0.0.1'],
-      env: extraEnv,
-    };
-  }
-
-  // Unrecognized framework — boot plainly with no tagging (legacy fallback).
-  const flags = ['--port', p, '--host', '127.0.0.1'];
-  const [cmd, args] = hasDevScript(dir)
-    ? ['npm', ['run', 'dev', '--', ...flags]]
-    : ['npx', ['astro', 'dev', ...flags]];
-  return { cmd, args: args as string[], env: extraEnv };
+  // static: plain HTML/CSS/JS repo served by the pilot's OWN Vite against the
+  // clone dir (spawnDevServer sets cwd=dir, Vite's root defaults to cwd).
+  // No install ever runs in the clone, so the server is up in seconds.
+  return {
+    cmd: process.execPath,
+    args: [
+      pilotViteBin(),
+      '--config',
+      boot.configPath,
+      '--port',
+      p,
+      '--host',
+      '127.0.0.1',
+    ],
+    env: extraEnv,
+  };
 };
 
 // The dev server prints the REAL cause (a module/import error, a missing dep)

@@ -29,7 +29,7 @@ export const loadMessageAttachments = (messageId: number) =>
     .where(eq(previewAttachment.messageId, messageId))
     .orderBy(previewAttachment.createdAt);
 
-export { chooseImageDir, listImageDirHints, publicRelFor, slugify } from './image-dirs';
+export { chooseImageDir, listImageDirHints, slugify } from './image-dirs';
 
 // ---------------------------------------------------------------------------
 // Destination planning
@@ -53,12 +53,11 @@ const exists = async (path: string) => {
  */
 export const planPlacements = async (params: {
   dir: string;
-  appDir: string;
   publicRel: string;
   attachments: AttachmentRow[];
 }): Promise<Placed[]> => {
-  const { dir, appDir, publicRel, attachments } = params;
-  const hints = await listImageDirHints(appDir, publicRel);
+  const { dir, publicRel, attachments } = params;
+  const hints = await listImageDirHints(dir, publicRel);
   const placed: Placed[] = [];
   const taken = new Set<string>();
   for (const row of attachments) {

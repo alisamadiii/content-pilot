@@ -7,6 +7,7 @@ import { checkAiAvailability } from './ai-availability';
 import { writeGeminiRuntime } from './gemini-setup';
 import { previewConfig } from './config';
 import { createDomainMap } from './domain-map';
+import { drainLiveBuilds, requeueInterruptedBuilds } from './live-build';
 import { startProxy } from './proxy';
 import {
   bootReconcile,
@@ -59,9 +60,16 @@ const main = async () => {
   );
 
   await bootReconcile();
+  // Live-site builds: resume any interrupted by a restart, then drain on
+  // cp_build NOTIFY (publish/import) plus the slow-pass safety net below.
+  await requeueInterruptedBuilds();
+  void drainLiveBuilds();
 
   await client.listen('cp_preview', () => {
     if (wake) wake();
+  });
+  await client.listen('cp_build', () => {
+    void drainLiveBuilds();
   });
   await client.listen('cp_domains', () => {
     void domainMap.refresh();
@@ -75,6 +83,7 @@ const main = async () => {
         lastSlowPass = Date.now();
         await sweepIdle();
         await pruneOrphanEvents();
+        void drainLiveBuilds();
       }
     } catch (error) {
       log(`tick failed: ${(error as Error).message}`);

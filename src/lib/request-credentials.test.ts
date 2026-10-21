@@ -73,9 +73,11 @@ test('session ids are DNS-label safe: 12 lowercase alphanumerics, unique', () =>
 });
 
 test('terminal statuses are exactly the non-revivable ones', () => {
+  // DELIBERATE CHANGE (root-only sites): the needs-config status was removed; a
+  // missing site now fails with a plain client-facing error.
   assert.deepEqual(
     [...TERMINAL_SESSION_STATUSES].sort(),
-    ['closed', 'expired', 'failed', 'needs_config', 'published']
+    ['closed', 'expired', 'failed', 'published']
   );
   assert.ok(!(TERMINAL_SESSION_STATUSES as readonly string[]).includes('paused'));
   assert.match(SESSION_ENDED_MESSAGE, /reopen the project/);

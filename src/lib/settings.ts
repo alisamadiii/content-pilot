@@ -3,20 +3,17 @@ import { db } from '@/db';
 import { appSetting } from '@/db/schema';
 import { domainKey } from './domain-rules';
 import {
-  appDirKey,
   clampMaxSessions,
   geminiTierKey,
   MAX_SESSIONS_KEY,
   normalizeGeminiTier,
   normalizeProvider,
   providerKey,
-  sanitizeAppDir,
   type AiProvider,
   type GeminiTier,
 } from './settings-rules';
 
 export {
-  appDirKey,
   geminiTierKey,
   MAX_SESSIONS_KEY,
   providerKey,
@@ -43,20 +40,6 @@ export const setSetting = async (key: string, value: string): Promise<void> => {
       target: appSetting.key,
       set: { value, updatedAt: new Date() },
     });
-};
-
-/**
- * The configured app subfolder for a repo (relative to the clone root), or null
- * when unset/auto. A stored value that fails sanitization (traversal, absolute)
- * is treated as unset rather than crashing the session.
- */
-export const getAppDir = async (repoId: number): Promise<string | null> => {
-  const raw = await getSetting(appDirKey(repoId));
-  try {
-    return sanitizeAppDir(raw);
-  } catch {
-    return null;
-  }
 };
 
 /**
@@ -133,7 +116,6 @@ export const removeRepoSettings = async (repoId: number): Promise<void> => {
     .delete(appSetting)
     .where(
       inArray(appSetting.key, [
-        appDirKey(repoId),
         providerKey(repoId),
         geminiTierKey(repoId),
       ])
