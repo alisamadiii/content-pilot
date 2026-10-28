@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'content-pilot',
+  title: 'Content Pilot',
   description: 'Self-hosted AI content-edit runner',
 };
 
