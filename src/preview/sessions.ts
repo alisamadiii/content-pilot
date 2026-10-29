@@ -45,7 +45,7 @@ type SessionRow = typeof previewSession.$inferSelect;
 
 type LiveSession = {
   id: string;
-  repoId: number;
+  projectId: string | null;
   dir: string;
   /** How to boot the tagged dev server (framework + wrapper config). */
   boot: BootPlan;
@@ -207,9 +207,9 @@ export const startSession = async (row: SessionRow) => {
     // GitHub ones sync against origin as always.
     const dir =
       row.source === 'upload'
-        ? await syncLocalRepo({ repoId: row.repoId, branch: row.branch })
+        ? await syncLocalRepo({ projectId: row.projectId, branch: row.branch })
         : await syncRepo({
-            repoId: row.repoId,
+            projectId: row.projectId,
             owner: row.owner,
             repo: row.repo,
             branch: row.branch,
@@ -251,7 +251,7 @@ export const startSession = async (row: SessionRow) => {
     bootOutput = captureOutput(child);
     const session: LiveSession = {
       id: row.id,
-      repoId: row.repoId,
+      projectId: row.projectId,
       dir,
       boot,
       port,

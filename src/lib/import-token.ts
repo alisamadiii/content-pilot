@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'crypto';
+import { isProjectId } from './project-id';
 
 /**
  * Verifies the one-time project-import token minted by the hub
@@ -6,11 +7,11 @@ import { createHmac, timingSafeEqual } from 'crypto';
  * and shared EDIT_TOKEN_SECRET as the edit token, but the payload carries
  * `scope: 'import'` so the two can never stand in for each other:
  * verifyEditToken rejects any payload with a `scope` field, and this verifier
- * requires it. The token authorizes exactly one zip upload for one repoId —
+ * requires it. The token authorizes exactly one zip upload for one project —
  * the import route 409s once the workspace dir exists.
  */
 export interface ImportTokenPayload {
-  repoId: number;
+  projectId: string;
   scope: 'import';
   exp: number;
 }
@@ -47,7 +48,7 @@ export const verifyImportToken = (
   }
 
   if (
-    typeof payload?.repoId !== 'number' ||
+    !isProjectId(payload?.projectId) ||
     payload?.scope !== 'import' ||
     typeof payload?.exp !== 'number' ||
     payload.exp <= Math.floor(Date.now() / 1000)

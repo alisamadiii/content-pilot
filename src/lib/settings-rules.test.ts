@@ -13,8 +13,9 @@ import {
 
 // DELIBERATE CHANGE (root-only sites): app-folder override removed (its key
 // assertions dropped from this test).
-test('setting keys are namespaced per repo', () => {
-  assert.equal(providerKey(1247662764), 'ai_provider:1247662764');
+// DELIBERATE CHANGE (2026-10-29): keys are per hub projectId (uuid).
+test('setting keys are namespaced per project', () => {
+  assert.equal(providerKey('11111111-1111-4111-8111-111111111111'), 'ai_provider:11111111-1111-4111-8111-111111111111');
   assert.equal(MAX_SESSIONS_KEY, 'max_preview_sessions');
 });
 
@@ -60,9 +61,9 @@ test('clampMaxSessions clamps both the override and the fallback into 1..ceiling
 
 // ------------------------------------------------- gemini key tier (2026-10-18)
 
-test('geminiTierKey is namespaced per repo and distinct from the other keys', () => {
-  assert.equal(geminiTierKey(1247662764), 'gemini_tier:1247662764');
-  assert.notEqual(geminiTierKey(1), providerKey(1));
+test('geminiTierKey is namespaced per project and distinct from the other keys', () => {
+  assert.equal(geminiTierKey('11111111-1111-4111-8111-111111111111'), 'gemini_tier:11111111-1111-4111-8111-111111111111');
+  assert.notEqual(geminiTierKey('11111111-1111-4111-8111-111111111111'), providerKey('11111111-1111-4111-8111-111111111111'));
 });
 
 test('normalizeGeminiTier: only an explicit "paid" selects paid; everything else is free', () => {

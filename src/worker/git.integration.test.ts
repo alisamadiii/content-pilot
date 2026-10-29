@@ -42,7 +42,7 @@ before(async () => {
   sh(seed, ['add', '-A']);
   sh(seed, ['commit', '-qm', 'init']);
   sh(seed, ['push', '-q', 'origin', 'main']);
-  work = g.repoDir(42);
+  work = g.repoDir('11111111-1111-4111-8111-111111111111');
   execFileSync('git', ['clone', '-q', origin, work]);
 });
 
@@ -59,8 +59,16 @@ test('sanitize redacts any basic auth header, leaves the rest', async () => {
   assert.equal(g.sanitize('clean message'), 'clean message');
 });
 
-test('repoDir is <WORKSPACE_DIR>/<repoId>', () => {
-  assert.equal(g.repoDir(42), join(ws, '42'));
+// DELIBERATE CHANGE (2026-10-29 projectId switch): workspaces are keyed by the
+// hub projectId (uuid) instead of the old numeric repo id.
+test('repoDir is <WORKSPACE_DIR>/<projectId>', () => {
+  assert.equal(g.repoDir('11111111-1111-4111-8111-111111111111'), join(ws, '11111111-1111-4111-8111-111111111111'));
+});
+
+test('repoDir refuses a missing or non-uuid project id (never the workspace root)', () => {
+  assert.throws(() => g.repoDir(null), /no project id/);
+  assert.throws(() => g.repoDir('42'), /no project id/);
+  assert.throws(() => g.repoDir('../etc'), /no project id/);
 });
 
 test('ensureGitExclude appends once, handles a missing trailing newline, never throws', () => {

@@ -22,9 +22,9 @@ export {
  * mirroring the intake route:
  *  - the long-lived API key (hub server → content-pilot), via `x-api-key`
  *    header or `Authorization: Bearer`;
- *  - the short-lived repo-scoped edit token (browser → content-pilot), via
+ *  - the short-lived project-scoped edit token (browser → content-pilot), via
  *    Bearer or — for EventSource, which cannot set headers — `?token=`.
- * Callers must additionally check `edit.repoId` against the session's repo.
+ * Callers must additionally check `edit.projectId` against the session's project.
  */
 export type SessionAuth =
   | { kind: 'api-key' }
@@ -48,7 +48,7 @@ type SessionRow = typeof previewSession.$inferSelect;
 
 /**
  * The auth + lookup preamble shared by every per-session write route:
- * credential check, session row, repo-scope check for edit tokens, and (unless
+ * credential check, session row, project-scope check for edit tokens, and (unless
  * `allowTerminal`) a 409 for sessions that have ended. Returns either the row
  * or a ready-to-return error Response carrying the CORS headers.
  */
@@ -77,7 +77,7 @@ export const loadSessionForEdit = async (
       response: Response.json({ error: 'Not found' }, { status: 404, headers }),
     };
   }
-  if (auth.kind === 'edit-token' && auth.payload.repoId !== session.repoId) {
+  if (auth.kind === 'edit-token' && auth.payload.projectId !== session.projectId) {
     return {
       response: Response.json({ error: 'Forbidden' }, { status: 403, headers }),
     };

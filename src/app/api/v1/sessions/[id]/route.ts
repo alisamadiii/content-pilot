@@ -10,10 +10,7 @@ import {
 } from '@/lib/session-auth';
 import { removeSessionUploads } from '@/lib/uploads';
 import { previewConfig, previewUrlFor } from '@/preview/config';
-import { enqueueLiveBuild } from '@/preview/live-build';
-import { hasLiveSite } from '@/preview/live-serve';
 import {
-  baseRef,
   git,
   repoDir,
   squashIntoDefault,
@@ -30,14 +27,9 @@ const actionSchema = z.discriminatedUnion('action', [
   // Pause: abort the in-flight AI run, keep the session live.
   z.object({ action: z.literal('cancel') }),
   // Publish: squash the session branch into the default branch as one commit
-  // authored by the project owner, push (GitHub projects), and queue the live
-  // build. The hub closes the session after.
-  // liveBuild: false = the site is hosted elsewhere (Netlify, Vercel,
-  // Cloudflare): squash + push only, no content-pilot build.
-  z.object({
-    action: z.literal('publish'),
-    liveBuild: z.boolean().optional(),
-  }),
+  // authored by the project owner and push (GitHub projects). The site's own
+  // host (Netlify etc.) deploys from there. The hub closes the session after.
+  z.object({ action: z.literal('publish') }),
 ]);
 
 const loadAuthorized = async (request: Request, id: string) => {
@@ -49,7 +41,7 @@ const loadAuthorized = async (request: Request, id: string) => {
     .where(eq(previewSession.id, id))
     .limit(1);
   if (!row) return { error: 404 as const };
-  if (auth.kind === 'edit-token' && auth.payload.repoId !== row.repoId) {
+  if (auth.kind === 'edit-token' && auth.payload.projectId !== row.projectId) {
     return { error: 403 as const };
   }
   return { row };
@@ -118,7 +110,7 @@ export const GET = async (
   return Response.json(
     {
       id: row.id,
-      repoId: row.repoId,
+      projectId: row.projectId,
       status: row.status,
       branch: row.branch,
       previewUrl: previewUrlFor(row.id),
@@ -174,7 +166,7 @@ export const POST = async (
       if (row.source === 'upload') {
         // Upload workspaces have no remote and can never be re-cloned — the
         // local clone IS the project. A missing dir is a hard error.
-        dir = repoDir(row.repoId);
+        dir = repoDir(row.projectId);
         if (!existsSync(join(dir, '.git'))) {
           return Response.json(
             {
@@ -188,7 +180,7 @@ export const POST = async (
         // syncRepo re-clones if the workspace was cleaned and resets the branch
         // to its pushed state (every applied edit is already committed+pushed).
         dir = await syncRepo({
-          repoId: row.repoId,
+          projectId: row.projectId,
           owner: row.owner,
           repo: row.repo,
           branch: row.branch,
@@ -209,24 +201,8 @@ export const POST = async (
           { status: 409, headers }
         );
       }
-      // Content Pilot hosted: the live site is a build of the published commit
-      // (GitHub projects were pushed above, inside squashIntoDefault). A no-op
-      // publish still builds when the site never went live — e.g. a GitHub
-      // project's first publish without edits. Externally hosted projects
-      // (liveBuild: false) stop at the push; their host deploys.
-      const liveBuild = parsed.data.liveBuild !== false;
-      const buildSha = !liveBuild
-        ? null
-        : squash.changed && squash.sha
-          ? squash.sha
-          : !hasLiveSite(row.repoId)
-            ? await git(dir, ['rev-parse', await baseRef(dir)])
-            : null;
-      const build = buildSha
-        ? await enqueueLiveBuild(row.repoId, buildSha.trim())
-        : null;
       return Response.json(
-        { id, sha: squash.sha, changed: squash.changed, build },
+        { id, sha: squash.sha, changed: squash.changed },
         { status: 200, headers }
       );
     } catch (error) {

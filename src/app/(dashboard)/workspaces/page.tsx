@@ -8,36 +8,26 @@ import { DeleteCloneButton, GeminiTierForm, ProviderForm } from './repo-actions'
 export const dynamic = 'force-dynamic';
 
 const ReposPage = async () => {
-  const [rows, providerRows, tierRows, domainRows] =
+  const [rows, providerRows, tierRows] =
     await Promise.all([
       listWorkspaces(),
       db.select().from(appSetting).where(like(appSetting.key, 'ai_provider:%')),
       db.select().from(appSetting).where(like(appSetting.key, 'gemini_tier:%')),
-      db.select().from(appSetting).where(like(appSetting.key, 'domain:%')),
     ]);
   // Default gemini; only an explicit `claude` value selects Claude.
   const providers = new Map(
     providerRows.map((r) => [
-      Number(r.key.slice('ai_provider:'.length)),
+      r.key.slice('ai_provider:'.length),
       r.value === 'claude' ? 'claude' : 'gemini',
     ])
   );
   // Default free; only an explicit `paid` value selects the paid key.
   const tiers = new Map(
     tierRows.map((r) => [
-      Number(r.key.slice('gemini_tier:'.length)),
+      r.key.slice('gemini_tier:'.length),
       r.value === 'paid' ? 'paid' : 'free',
     ])
   );
-  // Upload-project domain mappings, grouped per repoId (read-only here; the
-  // hub writes them).
-  const domains = new Map<number, string[]>();
-  for (const r of domainRows) {
-    const repoId = Number(r.value);
-    const host = r.key.slice('domain:'.length);
-    if (!Number.isSafeInteger(repoId)) continue;
-    domains.set(repoId, [...(domains.get(repoId) ?? []), host]);
-  }
 
   return (
     <>
@@ -52,11 +42,10 @@ const ReposPage = async () => {
         <table>
           <thead>
             <tr>
-              <th>repo id</th>
+              <th>project id</th>
               <th>owner</th>
               <th>repository</th>
               <th>branch</th>
-              <th>domains</th>
               <th>ai</th>
               <th>gemini key</th>
               <th></th>
@@ -65,8 +54,8 @@ const ReposPage = async () => {
           <tbody>
             {rows.map((row) => {
               return (
-                <tr key={row.repoId}>
-                  <td className="muted">{row.repoId}</td>
+                <tr key={row.projectId}>
+                  <td className="muted">{row.projectId}</td>
                   <td>{row.owner}</td>
                   <td>
                     <span
@@ -89,14 +78,11 @@ const ReposPage = async () => {
                     </a>
                   </td>
                   <td className="muted">{row.branch}</td>
-                  <td className="muted">
-                    {domains.get(row.repoId)?.join(', ') ?? '-'}
-                  </td>
                   <td>
                     <ProviderForm
-                      repoId={row.repoId}
+                      projectId={row.projectId}
                       value={
-                        (providers.get(row.repoId) ?? 'gemini') as
+                        (providers.get(row.projectId) ?? 'gemini') as
                           | 'claude'
                           | 'gemini'
                       }
@@ -104,18 +90,18 @@ const ReposPage = async () => {
                   </td>
                   <td>
                     <GeminiTierForm
-                      repoId={row.repoId}
+                      projectId={row.projectId}
                       value={
-                        (tiers.get(row.repoId) ?? 'free') as 'free' | 'paid'
+                        (tiers.get(row.projectId) ?? 'free') as 'free' | 'paid'
                       }
                       disabled={
-                        (providers.get(row.repoId) ?? 'gemini') === 'claude'
+                        (providers.get(row.projectId) ?? 'gemini') === 'claude'
                       }
                     />
                   </td>
                   <td>
                     <DeleteCloneButton
-                      repoId={row.repoId}
+                      projectId={row.projectId}
                       label={`${row.owner}/${row.repo}`}
                     />
                   </td>

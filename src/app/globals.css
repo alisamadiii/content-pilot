@@ -275,14 +275,3 @@ button.danger {
   white-space: nowrap;
 }
 
-/* urls page */
-.urls-table tbody tr:hover td {
-  background: var(--bg-alt);
-}
-.kind-dot {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  vertical-align: middle;
-}

@@ -35,7 +35,7 @@ before(async () => {
   sh(seed, ['add', '-A']);
   sh(seed, ['commit', '-qm', 'init']);
   sh(seed, ['push', '-q', 'origin', 'main']);
-  work = g.repoDir(77);
+  work = g.repoDir('33333333-3333-4333-8333-333333333333');
   execFileSync('git', ['clone', '-q', origin, work]);
 });
 

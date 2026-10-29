@@ -11,9 +11,8 @@ import {
   userCodeEnv,
 } from './session-boot';
 
-// npm install + one-shot client commands (install, build). DB-free so the
-// publish build (live-serve.ts) can share it with preview sessions and both
-// stay unit-testable. Every command runs with the scrubbed userCodeEnv.
+// npm install + one-shot client commands. DB-free so it stays
+// unit-testable. Every command runs with the scrubbed userCodeEnv.
 
 export const run = (
   cmd: string,

@@ -5,7 +5,7 @@
  * calls and wall time. No DB, no dev server, no commit — the clone's working
  * tree may be modified by the model; `git checkout .` afterwards.
  *
- *   pnpm exec tsx scripts/gemini-probe.ts <repoId> "<message>" [pageUrl]
+ *   pnpm exec tsx scripts/gemini-probe.ts <projectId> "<message>" [pageUrl]
  *   DRY=1 … prints the prompt instead of running.
  */
 import { spawn } from 'child_process';
@@ -31,13 +31,13 @@ import {
 import { chooseImageDir, listImageDirHints, slugify } from '../src/preview/image-dirs';
 import { mkdir, writeFile } from 'fs/promises';
 
-const [repoId, message, pageUrl = 'http://x.localhost:3020/'] = process.argv.slice(2);
-if (!repoId || !message) {
-  console.error('usage: tsx scripts/gemini-probe.ts <repoId> "<message>" [pageUrl]');
+const [projectId, message, pageUrl = 'http://x.localhost:3020/'] = process.argv.slice(2);
+if (!projectId || !message) {
+  console.error('usage: tsx scripts/gemini-probe.ts <projectId> "<message>" [pageUrl]');
   process.exit(2);
 }
-// A repo id under WORKSPACE_DIR, or an absolute path to any local clone.
-const dir = repoId.startsWith('/') ? repoId : join(config.workspaceDir, repoId);
+// A project id under WORKSPACE_DIR, or an absolute path to any local clone.
+const dir = projectId.startsWith('/') ? projectId : join(config.workspaceDir, projectId);
 
 const main = async () => {
   writeGeminiRuntime((m) => console.error('[setup]', m));

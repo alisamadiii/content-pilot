@@ -60,14 +60,14 @@ export const GET = async (
     return Response.json({ error: 'Unauthorized' }, { status: 401, headers: cors });
   }
   const [session] = await db
-    .select({ repoId: previewSession.repoId, status: previewSession.status })
+    .select({ projectId: previewSession.projectId, status: previewSession.status })
     .from(previewSession)
     .where(eq(previewSession.id, id))
     .limit(1);
   if (!session) {
     return Response.json({ error: 'Not found' }, { status: 404, headers: cors });
   }
-  if (auth.kind === 'edit-token' && auth.payload.repoId !== session.repoId) {
+  if (auth.kind === 'edit-token' && auth.payload.projectId !== session.projectId) {
     return Response.json({ error: 'Forbidden' }, { status: 403, headers: cors });
   }
 

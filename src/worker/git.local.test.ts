@@ -31,7 +31,7 @@ let work: string;
 // An uploaded workspace: git init on main, one import commit, NO origin.
 before(async () => {
   g = await import('./git');
-  work = g.repoDir(1000000000077);
+  work = g.repoDir('11111111-1111-4111-8111-111111111111');
   execFileSync('git', ['init', '-q', work]);
   sh(work, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
   writeFileSync(join(work, 'index.html'), '<h1>v1</h1>\n');
@@ -46,7 +46,7 @@ test('hasOrigin is false for an uploaded workspace, baseRef is local main', asyn
 
 test('syncLocalRepo creates the session branch off main with a clean tree', async () => {
   writeFileSync(join(work, 'stray.txt'), 'stray\n');
-  const dir = await g.syncLocalRepo({ repoId: 1000000000077, branch: 'preview/s1' });
+  const dir = await g.syncLocalRepo({ projectId: '11111111-1111-4111-8111-111111111111', branch: 'preview/s1' });
   assert.equal(dir, work);
   assert.equal(sh(work, ['rev-parse', '--abbrev-ref', 'HEAD']), 'preview/s1');
   assert.equal(existsSync(join(work, 'stray.txt')), false);
@@ -89,7 +89,7 @@ test('squashIntoDefault squashes into local main without any remote', async () =
 
 test('squashIntoDefault is a clean no-op when the branch adds nothing', async () => {
   // The branch was just squashed into main; rebuild it fresh from main.
-  await g.syncLocalRepo({ repoId: 1000000000077, branch: 'preview/s2' });
+  await g.syncLocalRepo({ projectId: '11111111-1111-4111-8111-111111111111', branch: 'preview/s2' });
   const result = await g.squashIntoDefault({
     dir: work,
     branch: 'preview/s2',
@@ -117,14 +117,14 @@ test('syncLocalRepo revives an existing branch instead of recreating it', async 
   const kept = sh(work, ['rev-parse', 'preview/s2']);
   // Simulate a pause/revive: switch away, then sync back.
   sh(work, ['checkout', '-q', 'main']);
-  await g.syncLocalRepo({ repoId: 1000000000077, branch: 'preview/s2' });
+  await g.syncLocalRepo({ projectId: '11111111-1111-4111-8111-111111111111', branch: 'preview/s2' });
   assert.equal(sh(work, ['rev-parse', 'HEAD']), kept);
   assert.equal(existsSync(join(work, 'keep.html')), true);
 });
 
 test('syncLocalRepo throws a client-facing error when the workspace is gone', async () => {
   await assert.rejects(
-    g.syncLocalRepo({ repoId: 1000000000088, branch: 'preview/x' }),
+    g.syncLocalRepo({ projectId: '22222222-2222-4222-8222-222222222222', branch: 'preview/x' }),
     /missing from the preview server/
   );
 });

@@ -4,10 +4,10 @@ import { useState, useTransition } from 'react';
 import { deleteRepoClone, setGeminiTier, setProvider } from './actions';
 
 export const ProviderForm = ({
-  repoId,
+  projectId,
   value,
 }: {
-  repoId: number;
+  projectId: string;
   value: 'claude' | 'gemini';
 }) => {
   const [pending, startTransition] = useTransition();
@@ -25,7 +25,7 @@ export const ProviderForm = ({
           setError(null);
           startTransition(async () => {
             try {
-              await setProvider(repoId, next);
+              await setProvider(projectId, next);
             } catch (err) {
               setCurrent(prev);
               setError(err instanceof Error ? err.message : 'Could not save.');
@@ -48,11 +48,11 @@ export const ProviderForm = ({
 };
 
 export const GeminiTierForm = ({
-  repoId,
+  projectId,
   value,
   disabled = false,
 }: {
-  repoId: number;
+  projectId: string;
   value: 'free' | 'paid';
   disabled?: boolean;
 }) => {
@@ -71,7 +71,7 @@ export const GeminiTierForm = ({
           setError(null);
           startTransition(async () => {
             try {
-              await setGeminiTier(repoId, next);
+              await setGeminiTier(projectId, next);
             } catch (err) {
               setCurrent(prev);
               setError(err instanceof Error ? err.message : 'Could not save.');
@@ -94,10 +94,10 @@ export const GeminiTierForm = ({
 };
 
 export const DeleteCloneButton = ({
-  repoId,
+  projectId,
   label,
 }: {
-  repoId: number;
+  projectId: string;
   label: string;
 }) => {
   const [pending, startTransition] = useTransition();
@@ -119,7 +119,7 @@ export const DeleteCloneButton = ({
           setError(null);
           startTransition(async () => {
             try {
-              await deleteRepoClone(repoId);
+              await deleteRepoClone(projectId);
             } catch (e) {
               setError(e instanceof Error ? e.message : 'Could not delete.');
             }

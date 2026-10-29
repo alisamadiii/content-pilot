@@ -1,17 +1,18 @@
 import { createHmac, timingSafeEqual } from 'crypto';
+import { isProjectId } from './project-id';
 
 /**
- * Verifies the short-lived, repo-scoped edit-session token minted by the hub
+ * Verifies the short-lived, project-scoped edit-session token minted by the hub
  * (packages/trpc/src/lib/cms/edit-token.ts). The canvas editor puts it in the
  * iframe URL and the cms-bridge overlay sends it here as a Bearer, so the
  * long-lived content-pilot API key never reaches the browser.
  *
  * Format (must match the hub): `base64url(payload).base64url(hmacSHA256(body))`,
- * payload = { repoId, exp }. Signed with the shared EDIT_TOKEN_SECRET.
+ * payload = { projectId, exp }. Signed with the shared EDIT_TOKEN_SECRET.
  * Returns the payload when valid + unexpired, else null.
  */
 export interface EditTokenPayload {
-  repoId: number;
+  projectId: string;
   exp: number;
 }
 
@@ -47,7 +48,7 @@ export const verifyEditToken = (
   }
 
   if (
-    typeof payload?.repoId !== 'number' ||
+    !isProjectId(payload?.projectId) ||
     typeof payload?.exp !== 'number' ||
     payload.exp <= Math.floor(Date.now() / 1000)
   ) {
@@ -56,7 +57,7 @@ export const verifyEditToken = (
 
   // Scoped tokens (e.g. the one-time import token, scope:'import') share the
   // secret and format but must never authorize edit-session routes. Edit
-  // tokens carry exactly { repoId, exp }.
+  // tokens carry exactly { projectId, exp }.
   if ('scope' in (payload as unknown as Record<string, unknown>)) {
     return null;
   }

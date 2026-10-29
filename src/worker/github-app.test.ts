@@ -115,31 +115,3 @@ test('bustTokenValue drops a minted token (true) and ignores foreign tokens (fal
   assert.equal(await app.installationTokenFor('acme', 'bustme'), 'ghs_rotating_2');
   assert.equal(app.bustTokenValue('not_ours'), false);
 });
-
-test('resolveRepoIdViaApp matches a repo id across installations', async (t) => {
-  t.after(() => {
-    globalThis.fetch = realFetch;
-  });
-  mockFetch((url) => {
-    if (url.startsWith('https://api.github.com/app/installations?')) {
-      return json([{ id: 901 }]);
-    }
-    if (url === 'https://api.github.com/app/installations/901/access_tokens') {
-      return json({ token: 'ghs_enum', expires_at: 'x' }, 201);
-    }
-    if (url.startsWith('https://api.github.com/installation/repositories')) {
-      return json({
-        repositories: [
-          { id: 1, name: 'other', owner: { login: 'acme' } },
-          { id: 555, name: 'found-it', owner: { login: 'acme' } },
-        ],
-      });
-    }
-    return null;
-  });
-  assert.deepEqual(await app.resolveRepoIdViaApp(555), {
-    owner: 'acme',
-    repo: 'found-it',
-  });
-  assert.equal(await app.resolveRepoIdViaApp(999999), null);
-});

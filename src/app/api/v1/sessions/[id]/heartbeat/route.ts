@@ -33,14 +33,14 @@ export const POST = async (
     return Response.json({ error: 'Unauthorized' }, { status: 401, headers });
   }
   const [row] = await db
-    .select({ id: previewSession.id, repoId: previewSession.repoId, status: previewSession.status })
+    .select({ id: previewSession.id, projectId: previewSession.projectId, status: previewSession.status })
     .from(previewSession)
     .where(eq(previewSession.id, id))
     .limit(1);
   if (!row) {
     return Response.json({ error: 'Not found' }, { status: 404, headers });
   }
-  if (auth.kind === 'edit-token' && auth.payload.repoId !== row.repoId) {
+  if (auth.kind === 'edit-token' && auth.payload.projectId !== row.projectId) {
     return Response.json({ error: 'Forbidden' }, { status: 403, headers });
   }
   if (!LIVE.includes(row.status as (typeof LIVE)[number])) {

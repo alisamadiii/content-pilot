@@ -54,7 +54,7 @@ export const POST = async (
     );
   }
 
-  const dir = repoDir(session.repoId);
+  const dir = repoDir(session.projectId);
   const result = await restoreFiles({ dir, paths: [parsed.data.path] });
   if (!result.ok) {
     return Response.json({ error: result.error }, { status: 400, headers });

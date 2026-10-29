@@ -1,7 +1,6 @@
-import { and, eq, inArray, like } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { db } from '@/db';
 import { appSetting } from '@/db/schema';
-import { domainKey } from './domain-rules';
 import {
   clampMaxSessions,
   geminiTierKey,
@@ -43,20 +42,20 @@ export const setSetting = async (key: string, value: string): Promise<void> => {
 };
 
 /**
- * The AI provider a repo's chat sessions run on. Default is `gemini` (cheap) —
+ * The AI provider a project's chat sessions run on. Default is `gemini` (cheap) —
  * every project uses it unless Ali explicitly flips this to `claude` for a
  * paying client.
  */
-export const getProvider = async (repoId: number): Promise<AiProvider> =>
-  normalizeProvider(await getSetting(providerKey(repoId)));
+export const getProvider = async (projectId: string): Promise<AiProvider> =>
+  normalizeProvider(await getSetting(providerKey(projectId)));
 
 /**
- * The Gemini key tier a repo's sessions use: `free` (default) or `paid`. Read
+ * The Gemini key tier a project's sessions use: `free` (default) or `paid`. Read
  * live per message, so a change in the admin takes effect on the next message
  * (unlike provider, which is bound per session).
  */
-export const getGeminiTier = async (repoId: number): Promise<GeminiTier> =>
-  normalizeGeminiTier(await getSetting(geminiTierKey(repoId)));
+export const getGeminiTier = async (projectId: string): Promise<GeminiTier> =>
+  normalizeGeminiTier(await getSetting(geminiTierKey(projectId)));
 
 /**
  * Effective cap on concurrent live preview sessions: the DB override when set
@@ -65,75 +64,15 @@ export const getGeminiTier = async (repoId: number): Promise<GeminiTier> =>
 export const getMaxSessions = async (): Promise<number> =>
   clampMaxSessions(await getSetting(MAX_SESSIONS_KEY));
 
-// ---------------------------------------------------------------------------
-// Domain serving map for uploaded projects: `domain:<host>` -> repoId. The
-// forward key is the PK, so the proxy-facing lookup is one indexed read; the
-// repo-scoped queries scan values, which is fine for a tiny settings table.
-// ---------------------------------------------------------------------------
-
-/** The repoId a mapped host serves, or null. */
-export const getDomainRepoId = async (host: string): Promise<number | null> => {
-  const value = await getSetting(domainKey(host));
-  const repoId = Number(value);
-  return value !== null && Number.isSafeInteger(repoId) && repoId > 0
-    ? repoId
-    : null;
-};
-
-export const setDomainMapping = async (
-  host: string,
-  repoId: number
-): Promise<void> => setSetting(domainKey(host), String(repoId));
-
-export const removeDomainMapping = async (host: string): Promise<void> => {
-  await db.delete(appSetting).where(eq(appSetting.key, domainKey(host)));
-};
-
-/** Every mapped host for a repo (free subdomain + custom domain). */
-export const listDomainsForRepo = async (repoId: number): Promise<string[]> => {
-  const rows = await db
-    .select({ key: appSetting.key })
-    .from(appSetting)
-    .where(
-      and(like(appSetting.key, 'domain:%'), eq(appSetting.value, String(repoId)))
-    );
-  return rows.map((row) => row.key.slice('domain:'.length));
-};
-
-export const removeAllDomainsForRepo = async (
-  repoId: number
-): Promise<void> => {
-  await db
-    .delete(appSetting)
-    .where(
-      and(like(appSetting.key, 'domain:%'), eq(appSetting.value, String(repoId)))
-    );
-};
-
-/** Removes a repo's per-project settings overrides (project delete). */
-export const removeRepoSettings = async (repoId: number): Promise<void> => {
+/** Removes a project's settings overrides (project delete). */
+export const removeProjectSettings = async (projectId: string): Promise<void> => {
   await db
     .delete(appSetting)
     .where(
       inArray(appSetting.key, [
-        providerKey(repoId),
-        geminiTierKey(repoId),
+        providerKey(projectId),
+        geminiTierKey(projectId),
       ])
     );
 };
 
-/** Every domain mapping, for the proxy's in-memory map. */
-export const listAllDomainMappings = async (): Promise<Map<string, number>> => {
-  const rows = await db
-    .select({ key: appSetting.key, value: appSetting.value })
-    .from(appSetting)
-    .where(like(appSetting.key, 'domain:%'));
-  const map = new Map<string, number>();
-  for (const row of rows) {
-    const repoId = Number(row.value);
-    if (Number.isSafeInteger(repoId) && repoId > 0) {
-      map.set(row.key.slice('domain:'.length), repoId);
-    }
-  }
-  return map;
-};

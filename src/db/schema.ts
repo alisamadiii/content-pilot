@@ -123,9 +123,12 @@ export const previewSession = pgTable(
     // nanoid(12), lowercase — doubles as the preview subdomain label and the
     // suffix of the git branch (preview/<id>).
     id: text('id').primaryKey(),
-    // GitHub's numeric repo id for `source: 'github'`; a synthetic id in the
-    // >= 1e12 range for uploaded (no-GitHub) projects — hence bigint.
-    repoId: bigint('repo_id', { mode: 'number' }).notNull(),
+    // The hub project (hub_project.id, a uuid): names the workspace dir and
+    // scopes edit tokens + settings. Null only on rows from before the switch.
+    projectId: text('project_id'),
+    // Legacy pre-uuid key (GitHub repo id / synthetic upload id). Kept only so
+    // scripts/migrate-project-ids.ts can map old rows; dropped afterwards.
+    repoId: bigint('repo_id', { mode: 'number' }),
     // Where the workspace comes from: 'github' = cloned + pushed via the App;
     // 'upload' = extracted from a user-uploaded zip, local-only git (no origin).
     source: text('source').$type<'github' | 'upload'>().notNull().default('github'),
@@ -138,7 +141,7 @@ export const previewSession = pgTable(
       .notNull()
       .default('starting'),
     // AI provider for this session's chat runs, bound at creation from the
-    // per-repo `ai_provider:<repoId>` setting. Default gemini (cheap); flipped
+    // per-project `ai_provider:<projectId>` setting. Default gemini (cheap); flipped
     // to claude per paying client. One provider per session — resume ids and
     // cost accounting are provider-specific, so switching provider means a new
     // session.
@@ -183,7 +186,7 @@ export const previewSession = pgTable(
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },
   (table) => [
-    index('idx_preview_session_repo_status').on(table.repoId, table.status),
+    index('idx_preview_session_project_status').on(table.projectId, table.status),
   ]
 );
 
@@ -296,42 +299,3 @@ export const previewEvent = pgTable(
   (table) => [index('idx_preview_event_session').on(table.sessionId, table.id)]
 );
 
-
-// ---------------------------------------------------------------------------
-// Live-site builds: every publish (and every upload import) queues one build of
-// the exact published commit. The preview supervisor builds it (astro/vite →
-// dist/, static → as-is) and atomically swaps the output into the live serve
-// dir. A failed build leaves the previous live site untouched.
-// ---------------------------------------------------------------------------
-
-export const LIVE_BUILD_STATUS_VALUES = [
-  'queued',
-  'building',
-  'ready',
-  'failed',
-  // A newer queued build for the same repo superseded this one before it ran.
-  'skipped',
-] as const;
-export type LiveBuildStatus = (typeof LIVE_BUILD_STATUS_VALUES)[number];
-
-export const liveBuild = pgTable(
-  'live_build',
-  {
-    id: serial('id').primaryKey(),
-    repoId: bigint('repo_id', { mode: 'number' }).notNull(),
-    // The published commit — built via `git archive <sha>`, never a branch tip.
-    sha: text('sha').notNull(),
-    status: text('status').$type<LiveBuildStatus>().notNull().default('queued'),
-    // Client-facing one-liner when status = failed.
-    error: text('error'),
-    // Tail of the install/build output, for the hub's "show details".
-    log: text('log'),
-    createdAt: timestamp('created_at').notNull().defaultNow(),
-    startedAt: timestamp('started_at'),
-    finishedAt: timestamp('finished_at'),
-  },
-  (table) => [
-    index('idx_live_build_repo').on(table.repoId, table.id),
-    index('idx_live_build_status').on(table.status),
-  ]
-);

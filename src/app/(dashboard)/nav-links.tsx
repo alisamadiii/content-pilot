@@ -7,7 +7,6 @@ import { authClient } from '@/lib/auth-client';
 const links = [
   { href: '/workspaces', label: 'workspaces' },
   { href: '/sessions', label: 'sessions' },
-  { href: '/urls', label: 'urls' },
   { href: '/settings', label: 'settings' },
 ];
 

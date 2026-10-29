@@ -1,13 +1,10 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { client } from '@/db';
-import { listAllDomainMappings } from '@/lib/settings';
 import { ensureWorkspace } from '../worker/config';
 import { checkAiAvailability } from './ai-availability';
 import { writeGeminiRuntime } from './gemini-setup';
 import { previewConfig } from './config';
-import { createDomainMap } from './domain-map';
-import { drainLiveBuilds, requeueInterruptedBuilds } from './live-build';
 import { startProxy } from './proxy';
 import {
   bootReconcile,
@@ -49,30 +46,15 @@ const main = async () => {
   // narration/dir tree, LOW thinking, plus the deny policy (no shell/network).
   writeGeminiRuntime(log);
 
-  // Custom-domain serving map (host -> repoId): loaded before the proxy takes
-  // traffic, refreshed on cp_domains NOTIFY + a 60s interval safety net.
-  const domainMap = createDomainMap({ load: listAllDomainMappings });
-  await domainMap.start();
-
-  startProxy(previewConfig.proxyPort, { resolveDomain: domainMap.resolve });
+  startProxy(previewConfig.proxyPort);
   log(
     `proxy listening on :${previewConfig.proxyPort} — preview base ${previewConfig.urlBase}, max ${previewConfig.maxSessions} sessions, idle TTL ${previewConfig.idleMinutes}m`
   );
 
   await bootReconcile();
-  // Live-site builds: resume any interrupted by a restart, then drain on
-  // cp_build NOTIFY (publish/import) plus the slow-pass safety net below.
-  await requeueInterruptedBuilds();
-  void drainLiveBuilds();
 
   await client.listen('cp_preview', () => {
     if (wake) wake();
-  });
-  await client.listen('cp_build', () => {
-    void drainLiveBuilds();
-  });
-  await client.listen('cp_domains', () => {
-    void domainMap.refresh();
   });
 
   let lastSlowPass = 0;
@@ -83,7 +65,6 @@ const main = async () => {
         lastSlowPass = Date.now();
         await sweepIdle();
         await pruneOrphanEvents();
-        void drainLiveBuilds();
       }
     } catch (error) {
       log(`tick failed: ${(error as Error).message}`);

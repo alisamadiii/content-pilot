@@ -2,15 +2,16 @@ import { existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { config } from '@/worker/config';
 import { git } from '@/worker/git';
-import { parseRemote } from './resolve-repo';
+import { parseRemote } from '@/worker/git';
+import { isProjectId } from './project-id';
 
 /**
- * A workspace is a repo clone on disk (a numeric dir named by repoId). There is
+ * A workspace is a repo clone on disk (a dir named by the hub projectId). There is
  * no `repo` table — owner/repo/branch are read live from the clone's git remote
  * and checked-out HEAD.
  */
 export interface KnownRepo {
-  repoId: number;
+  projectId: string;
   owner: string;
   repo: string;
   branch: string;
@@ -18,7 +19,7 @@ export interface KnownRepo {
 }
 
 /**
- * Workspaces derived strictly from what's on disk: every numeric clone dir in
+ * Workspaces derived strictly from what's on disk: every project clone dir in
  * the workspace folder, with its live slug + checked-out branch read from git.
  * Every row is a real folder you can configure or delete.
  */
@@ -32,10 +33,9 @@ export const listWorkspaces = async (): Promise<KnownRepo[]> => {
 
   const rows: KnownRepo[] = [];
   for (const name of dirs) {
-    if (!/^\d+$/.test(name)) continue;
+    if (!isProjectId(name)) continue;
     const dir = join(config.workspaceDir, name);
     if (!existsSync(join(dir, '.git'))) continue;
-    const repoId = Number(name);
 
     let slug: { owner: string; repo: string } | null = null;
     try {
@@ -52,7 +52,7 @@ export const listWorkspaces = async (): Promise<KnownRepo[]> => {
     }
 
     rows.push({
-      repoId,
+      projectId: name,
       // No parseable origin = an uploaded (local-only) workspace.
       owner: slug?.owner ?? 'upload',
       repo: slug?.repo ?? name,
@@ -61,5 +61,7 @@ export const listWorkspaces = async (): Promise<KnownRepo[]> => {
     });
   }
 
-  return rows.sort((a, b) => a.repoId - b.repoId);
+  return rows.sort((a, b) =>
+    `${a.owner}/${a.repo}`.localeCompare(`${b.owner}/${b.repo}`)
+  );
 };

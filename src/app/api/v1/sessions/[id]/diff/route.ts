@@ -39,7 +39,7 @@ export const GET = async (
   if (!isFullSha(to) || (fromParam !== null && !isFullSha(fromParam))) {
     return Response.json({ error: 'Invalid commit' }, { status: 400, headers });
   }
-  const dir = repoDir(session.repoId);
+  const dir = repoDir(session.projectId);
   const path = resolveRepoPath(dir, pathParam);
   if (!path) {
     return Response.json({ error: 'Invalid path' }, { status: 400, headers });

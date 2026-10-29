@@ -8,7 +8,7 @@ Self-hosted AI website editor. A client opens a **live preview session** for the
   - Content-only editing scope; the AI edits inside a clone, the supervisor does all git operations.
   - Secrets, lockfiles, `package.json`, and `.github/` are blocked from any commit.
   - Per-repo provider: Gemini by default (cheap), Claude for paying clients.
-  - Token diet: the file for the page being edited (plus its components) is inlined into every request, uploaded images are placed by the server so the AI only adds the reference, and Gemini runs with a replacement system prompt, six tools and LOW thinking. `/skill` messages inline the repo's `.claude/skills/<name>/SKILL.md` for Gemini (Claude's harness expands them itself). `pnpm exec tsx scripts/gemini-probe.ts <repoId> "<message>"` measures one message's tokens and tool calls against a clone.
+  - Token diet: the file for the page being edited (plus its components) is inlined into every request, uploaded images are placed by the server so the AI only adds the reference, and Gemini runs with a replacement system prompt, six tools and LOW thinking. `/skill` messages inline the repo's `.claude/skills/<name>/SKILL.md` for Gemini (Claude's harness expands them itself). `pnpm exec tsx scripts/gemini-probe.ts <projectId> "<message>"` measures one message's tokens and tool calls against a clone.
 
 ## Requirements
 
@@ -56,8 +56,8 @@ Endpoints accept either an `x-api-key` header (server-to-server) or a Bearer edi
 
 | Method | Path | Description |
 | --- | --- | --- |
-| POST | `/api/v1/sessions` | Create or join a live session: `{ repoId, requestedBy?, branch? }`. `branch` runs the session on a named branch (commits persist there); omitted = ephemeral `preview/<id>` off the default branch. 409 `branch_mismatch` when the repo's live session is on another branch (close it first) |
-| GET | `/api/v1/sessions?repoId=` | Current session for a repo (omit `repoId`, api-key only, for all live sessions) |
+| POST | `/api/v1/sessions` | Create or join a live session: `{ projectId, owner, repo, source?, requestedBy?, branch? }` (`projectId` = the hub project uuid; one workspace per project). `branch` runs the session on a named branch (commits persist there); omitted = ephemeral `preview/<id>` off the default branch. 409 `branch_mismatch` when the project's live session is on another branch (close it first) |
+| GET | `/api/v1/sessions?projectId=` | Current session for a project (omit `projectId`, api-key only, for all live sessions) |
 | GET | `/api/v1/sessions/:id` | Session status |
 | POST | `/api/v1/sessions/:id/messages` | Send a chat message (queues an AI edit turn) |
 | GET | `/api/v1/sessions/:id/events` | SSE stream of status / chat / commit events (resumable via `Last-Event-ID`) |

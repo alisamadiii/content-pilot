@@ -21,8 +21,6 @@ export const previewConfig = {
   idleWarnMinutes: Number(process.env.SESSION_IDLE_WARN_MINUTES) || 20,
   installTimeoutMs: Number(process.env.INSTALL_TIMEOUT_MS) || 300_000,
   devReadyTimeoutMs: Number(process.env.DEV_READY_TIMEOUT_MS) || 120_000,
-  // Publish builds (astro build / vite build) of the live site.
-  buildTimeoutMs: Number(process.env.BUILD_TIMEOUT_MS) || 600_000,
   messageTimeoutMs: Number(process.env.SESSION_MESSAGE_TIMEOUT_MS) || 600_000,
   // Match the batch jobs model (haiku) — cheap + fast for content edits. Bump
   // via SESSION_CLAUDE_MODEL if a client's edits need a stronger model.
@@ -33,7 +31,7 @@ export const previewConfig = {
   geminiModel: process.env.SESSION_GEMINI_MODEL || 'gemini-3.1-flash-lite',
   // Two Gemini keys: the free-tier key (default, for unpaid client sites) and
   // an optional paid-tier key. A workspace is toggled free/paid in the admin
-  // (gemini_tier:<repoId>); the runner picks the matching key per message.
+  // (gemini_tier:<projectId>); the runner picks the matching key per message.
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   geminiApiKeyPaid: process.env.GEMINI_API_KEY_PAID || '',
   // Gemini emits token counts, not dollars — cost is computed from these.

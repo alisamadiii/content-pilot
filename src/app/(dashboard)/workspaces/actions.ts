@@ -6,7 +6,7 @@ import { rm } from 'fs/promises';
 import { join, resolve, sep } from 'path';
 import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
-import { client, db } from '@/db';
+import { db } from '@/db';
 import {
   previewSession,
   PREVIEW_SESSION_LIVE_STATUSES,
@@ -15,12 +15,11 @@ import { auth } from '@/lib/auth';
 import {
   geminiTierKey,
   providerKey,
-  removeAllDomainsForRepo,
   setSetting,
 } from '@/lib/settings';
 import { normalizeGeminiTier, normalizeProvider } from '@/lib/settings-rules';
-import { removeLiveSnapshot } from '@/preview/live-serve';
 import { config } from '@/worker/config';
+import { isProjectId } from '@/lib/project-id';
 
 const requireSession = async () => {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -35,10 +34,10 @@ const requireSession = async () => {
  * path-checked so only a direct child of the workspace can ever be removed —
  * never a traversal target.
  */
-export const deleteRepoClone = async (repoId: number) => {
+export const deleteRepoClone = async (projectId: string) => {
   await requireSession();
-  if (!Number.isInteger(repoId) || repoId <= 0) {
-    throw new Error('Invalid repo id.');
+  if (!isProjectId(projectId)) {
+    throw new Error('Invalid project id.');
   }
 
   const [liveSession] = await db
@@ -46,7 +45,7 @@ export const deleteRepoClone = async (repoId: number) => {
     .from(previewSession)
     .where(
       and(
-        eq(previewSession.repoId, repoId),
+        eq(previewSession.projectId, projectId),
         inArray(previewSession.status, [...PREVIEW_SESSION_LIVE_STATUSES])
       )
     )
@@ -60,7 +59,7 @@ export const deleteRepoClone = async (repoId: number) => {
   // Path safety: resolve and confirm the target is a direct child of the
   // workspace before any recursive delete.
   const base = resolve(config.workspaceDir);
-  const target = resolve(join(base, String(repoId)));
+  const target = resolve(join(base, projectId));
   if (target === base || !target.startsWith(base + sep)) {
     throw new Error('Refusing to delete outside the workspace.');
   }
@@ -68,48 +67,39 @@ export const deleteRepoClone = async (repoId: number) => {
   if (existsSync(target)) {
     await rm(target, { recursive: true, force: true });
   }
-  // Upload projects also serve a live snapshot — take it down with the clone,
-  // along with any domain mappings pointing at it.
-  await removeLiveSnapshot(repoId);
-  await removeAllDomainsForRepo(repoId);
-  try {
-    await client.notify('cp_domains', '');
-  } catch {
-    // The supervisor also refreshes on an interval.
-  }
   revalidatePath('/workspaces');
 };
 
 /**
- * Sets a repo's AI provider for future preview chat sessions. `gemini` (the
+ * Sets a project's AI provider for future preview chat sessions. `gemini` (the
  * default, cheap) for unpaid projects; `claude` for paying clients. Only
  * affects sessions created after the change — provider is bound per session.
  */
-export const setProvider = async (repoId: number, value: string) => {
+export const setProvider = async (projectId: string, value: string) => {
   await requireSession();
-  if (!Number.isInteger(repoId) || repoId <= 0) {
-    throw new Error('Invalid repo id.');
+  if (!isProjectId(projectId)) {
+    throw new Error('Invalid project id.');
   }
   if (value !== 'claude' && value !== 'gemini') {
     throw new Error('Provider must be claude or gemini.');
   }
-  await setSetting(providerKey(repoId), normalizeProvider(value));
+  await setSetting(providerKey(projectId), normalizeProvider(value));
   revalidatePath('/workspaces');
 };
 
 /**
- * Sets a repo's Gemini key tier: `free` (default, unpaid sites) or `paid`.
+ * Sets a project's Gemini key tier: `free` (default, unpaid sites) or `paid`.
  * Read live per message, so the change takes effect on the next message. Only
  * matters when the provider is gemini; harmless for claude projects.
  */
-export const setGeminiTier = async (repoId: number, value: string) => {
+export const setGeminiTier = async (projectId: string, value: string) => {
   await requireSession();
-  if (!Number.isInteger(repoId) || repoId <= 0) {
-    throw new Error('Invalid repo id.');
+  if (!isProjectId(projectId)) {
+    throw new Error('Invalid project id.');
   }
   if (value !== 'free' && value !== 'paid') {
     throw new Error('Gemini tier must be free or paid.');
   }
-  await setSetting(geminiTierKey(repoId), normalizeGeminiTier(value));
+  await setSetting(geminiTierKey(projectId), normalizeGeminiTier(value));
   revalidatePath('/workspaces');
 };

@@ -37,7 +37,7 @@ const ghHeaders = (auth: string) => ({
   'X-GitHub-API-Version': '2022-11-28',
 });
 
-// ── Caches (process-lifetime Maps with expiry, matching resolve-repo's style) ──
+// ── Caches (process-lifetime Maps with expiry) ──
 
 const INSTALLATION_TTL_MS = 10 * 60 * 1000;
 const TOKEN_TTL_MS = 55 * 60 * 1000;
@@ -150,41 +150,4 @@ export const installationTokenFor = async (
   const installationId = await installationIdFor(owner, repo);
   if (!installationId) return null;
   return mintToken(installationId);
-};
-
-/**
- * Last-resort repoId → slug resolution: enumerate the app's installations and
- * their repos, matching by id. Only runs when resolve-repo has no hint and no
- * clone — results ride resolve-repo's own cache.
- */
-export const resolveRepoIdViaApp = async (
-  repoId: number
-): Promise<{ owner: string; repo: string } | null> => {
-  if (!isGithubAppConfigured()) return null;
-  const installations = (await fetch(
-    'https://api.github.com/app/installations?per_page=100',
-    { headers: ghHeaders(appJwt()) }
-  )
-    .then((r) => (r.ok ? r.json() : []))
-    .catch(() => [])) as { id: number }[];
-
-  for (const installation of installations) {
-    const token = await mintToken(installation.id);
-    if (!token) continue;
-    for (let page = 1; page <= 10; page++) {
-      const data = (await fetch(
-        `https://api.github.com/installation/repositories?per_page=100&page=${page}`,
-        { headers: ghHeaders(token) }
-      )
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null)) as {
-        repositories?: { id: number; name: string; owner: { login: string } }[];
-      } | null;
-      const repos = data?.repositories ?? [];
-      const match = repos.find((r) => r.id === repoId);
-      if (match) return { owner: match.owner.login, repo: match.name };
-      if (repos.length < 100) break;
-    }
-  }
-  return null;
 };

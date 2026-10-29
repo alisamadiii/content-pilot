@@ -3,11 +3,11 @@ import { previewConfig } from '@/preview/config';
 // Pure rules behind src/lib/settings.ts, kept DB-free so they can be unit-tested
 // without a DATABASE_URL (importing @/db throws when it is unset).
 
-/** Per-repo AI provider override key (e.g. `ai_provider:1247662764`). */
-export const providerKey = (repoId: number) => `ai_provider:${repoId}`;
+/** Per-project AI provider override key (`ai_provider:<projectId>`). */
+export const providerKey = (projectId: string) => `ai_provider:${projectId}`;
 
-/** Per-repo Gemini key tier key (e.g. `gemini_tier:1247662764`). */
-export const geminiTierKey = (repoId: number) => `gemini_tier:${repoId}`;
+/** Per-project Gemini key tier key (`gemini_tier:<projectId>`). */
+export const geminiTierKey = (projectId: string) => `gemini_tier:${projectId}`;
 
 export const MAX_SESSIONS_KEY = 'max_preview_sessions';
 export const MAX_SESSIONS_CEILING = 20;

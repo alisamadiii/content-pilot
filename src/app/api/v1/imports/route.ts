@@ -1,3 +1,4 @@
+import { isProjectId } from '@/lib/project-id';
 import { createWriteStream, existsSync } from 'fs';
 import { mkdir, readdir, rename, rm } from 'fs/promises';
 import { join } from 'path';
@@ -10,19 +11,17 @@ import { config, ensureWorkspace } from '@/worker/config';
 import { git, repoDir } from '@/worker/git';
 import { extractZip, stripWrapperDir, ZipError } from '@/worker/zip-extract';
 import { checkFramework } from '@/preview/framework';
-import { enqueueLiveBuild } from '@/preview/live-build';
-import { liveUrlFor } from '@/preview/live-serve';
 
 export const runtime = 'nodejs';
 
 /**
  * Project import for uploaded (no-GitHub) projects: the hub mints a one-time
- * import token bound to a fresh synthetic repoId, the browser POSTs the zip
+ * import token bound to the new project id, the browser POSTs the zip
  * straight here (Vercel's body cap rules out proxying through the hub), and
  * the extracted tree becomes a local-only git workspace — `git init`, branch
  * `main`, one initial commit. Only static sites get in (Astro, Vite, plain
- * HTML) — anything else is refused before the workspace exists. The first
- * live build is queued right away so the live URL works before any publish.
+ * HTML) — anything else is refused before the workspace exists. Uploaded
+ * projects are preview-only: publish commits locally, nothing deploys.
  *
  * The body is a raw zip stream (`Content-Type: application/zip`), never
  * multipart: `request.formData()` would buffer the whole archive in memory.
@@ -38,11 +37,11 @@ export const OPTIONS = async (request: Request) =>
     headers: sessionCorsHeaders(request.headers.get('origin')),
   });
 
-const authenticate = async (request: Request, repoId: number) => {
+const authenticate = async (request: Request, projectId: string) => {
   const { apiKeyCandidate, editTokenCandidate } = extractCredentials(request);
   if (await verifyApiKey(apiKeyCandidate)) return true;
   const token = verifyImportToken(editTokenCandidate);
-  return token !== null && token.repoId === repoId;
+  return token !== null && token.projectId === projectId;
 };
 
 /** One header line of commit identity, length-capped; null when absent. */
@@ -57,17 +56,17 @@ const authorFromHeaders = (request: Request) => {
 export const POST = async (request: Request) => {
   const headers = sessionCorsHeaders(request.headers.get('origin'));
   const url = new URL(request.url);
-  const repoId = Number(url.searchParams.get('repoId'));
+  const projectId = url.searchParams.get('projectId') ?? '';
   const name = (url.searchParams.get('name') || 'site').slice(0, 100);
-  if (!Number.isSafeInteger(repoId) || repoId <= 0) {
-    return Response.json({ error: 'repoId required' }, { status: 400, headers });
+  if (!isProjectId(projectId)) {
+    return Response.json({ error: 'projectId required' }, { status: 400, headers });
   }
 
-  if (!(await authenticate(request, repoId))) {
+  if (!(await authenticate(request, projectId))) {
     return Response.json({ error: 'Unauthorized' }, { status: 401, headers });
   }
 
-  const dir = repoDir(repoId);
+  const dir = repoDir(projectId);
   if (existsSync(dir)) {
     // Also what makes the import token effectively single-use.
     return Response.json(
@@ -88,8 +87,8 @@ export const POST = async (request: Request) => {
   }
 
   ensureWorkspace();
-  const zipPath = join(importsRoot(), `${repoId}.zip`);
-  const staging = join(importsRoot(), `${repoId}-x`);
+  const zipPath = join(importsRoot(), `${projectId}.zip`);
+  const staging = join(importsRoot(), `${projectId}-x`);
   const cleanup = async () => {
     await rm(zipPath, { force: true }).catch(() => undefined);
     await rm(staging, { recursive: true, force: true }).catch(() => undefined);
@@ -169,17 +168,8 @@ export const POST = async (request: Request) => {
     await rename(staging, dir);
     await rm(zipPath, { force: true }).catch(() => undefined);
 
-    const sha = await git(dir, ['rev-parse', 'HEAD']);
-    const build = await enqueueLiveBuild(repoId, sha.trim());
-
     return Response.json(
-      {
-        repoId,
-        files,
-        framework: check.framework,
-        liveUrl: liveUrlFor(repoId),
-        build,
-      },
+      { projectId, files, framework: check.framework },
       { status: 201, headers }
     );
   } catch (error) {

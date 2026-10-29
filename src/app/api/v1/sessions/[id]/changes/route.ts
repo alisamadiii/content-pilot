@@ -24,7 +24,7 @@ export const GET = async (
   if ('response' in loaded) return loaded.response;
   const { session, headers } = loaded;
 
-  const dir = repoDir(session.repoId);
+  const dir = repoDir(session.projectId);
   const revs = await loadSessionRevs(session.id, dir);
   const output =
     revs.base === revs.head

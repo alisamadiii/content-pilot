@@ -248,14 +248,16 @@ const processMessage = async (row: MessageRow) => {
     provider === 'gemini' ? runSessionGemini : runSessionClaude;
   const costIsCumulative = provider === 'claude';
 
-  // Gemini key tier (free/paid) is read live per message from the per-repo
+  // Gemini key tier (free/paid) is read live per message from the per-project
   // gemini_tier setting (no session column — the key choice can't corrupt
   // resume state, which gemini doesn't use). Undefined for Claude.
   let geminiApiKey: string | undefined;
   let geminiTier: 'free' | 'paid' | undefined;
   if (provider === 'gemini') {
     const resolved = resolveGeminiKey({
-      tier: await getGeminiTier(sessionRow.repoId),
+      tier: sessionRow.projectId
+        ? await getGeminiTier(sessionRow.projectId)
+        : 'free',
       freeKey: previewConfig.geminiApiKey,
       paidKey: previewConfig.geminiApiKeyPaid,
     });

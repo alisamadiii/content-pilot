@@ -7,8 +7,8 @@ import {
 } from '@/db/schema';
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { resolveRepo, seedRepo } from '@/lib/resolve-repo';
 import { repoDir } from '@/worker/git';
+import { isProjectId } from '@/lib/project-id';
 import { getGeminiTier, getMaxSessions, getProvider } from '@/lib/settings';
 import {
   authenticateSessionRequest,
@@ -21,7 +21,8 @@ import { isPreviewBranch, isValidBranchName } from '@/preview/branch-name';
 const LIVE = [...PREVIEW_SESSION_LIVE_STATUSES];
 
 const createSchema = z.object({
-  repoId: z.number().int().positive(),
+  /** The hub project (hub_project.id). Keys the workspace dir + settings. */
+  projectId: z.string().uuid(),
   requestedBy: z.string().trim().max(200).optional(),
   /**
    * Named branch to run the session ON (commits land there and persist).
@@ -29,8 +30,8 @@ const createSchema = z.object({
    */
   branch: z.string().trim().min(1).max(100).optional(),
   /**
-   * Optional slug hint from the hub (it already knows both). Seeds the
-   * repoId→slug cache so the GitHub App path needs no PAT and no API lookup.
+   * The repo's slug. Required: GitHub ops (clone/fetch/push, installation
+   * tokens) go by owner/repo; uploads use it as their display identity.
    */
   owner: z.string().trim().min(1).max(100).optional(),
   repo: z.string().trim().min(1).max(200).optional(),
@@ -55,7 +56,7 @@ const sameBranch = (existing: string, requested: string | undefined) =>
 
 const publicSession = (row: typeof previewSession.$inferSelect) => ({
   id: row.id,
-  repoId: row.repoId,
+  projectId: row.projectId,
   source: row.source,
   owner: row.owner,
   repo: row.repo,
@@ -89,7 +90,7 @@ export const POST = async (request: Request) => {
     );
   }
   const input = parsed.data;
-  if (auth.kind === 'edit-token' && auth.payload.repoId !== input.repoId) {
+  if (auth.kind === 'edit-token' && auth.payload.projectId !== input.projectId) {
     return Response.json({ error: 'Forbidden' }, { status: 403, headers });
   }
   if (input.branch !== undefined && !isValidBranchName(input.branch)) {
@@ -99,7 +100,7 @@ export const POST = async (request: Request) => {
     );
   }
 
-  // One live session per repo — a second start joins the existing session
+  // One live session per project — a second start joins the existing session
   // (two hub tabs / two collaborators share one preview). A paused session is
   // joined too: it's revived below instead of creating a fresh one, so the
   // branch, conversation, and any unpublished edits carry over.
@@ -108,12 +109,12 @@ export const POST = async (request: Request) => {
     .from(previewSession)
     .where(
       and(
-        eq(previewSession.repoId, input.repoId),
+        eq(previewSession.projectId, input.projectId),
         inArray(previewSession.status, [...LIVE, 'paused'])
       )
     )
     .limit(1);
-  // A session on another branch can't be joined: one clone per repo means one
+  // A session on another branch can't be joined: one clone per project means one
   // checked-out branch. The hub closes the old session before asking for a new
   // branch, so this only fires on a race between two tabs.
   if (existing && !sameBranch(existing.branch, input.branch)) {
@@ -160,17 +161,17 @@ export const POST = async (request: Request) => {
     return Response.json(publicSession(revived), { status: 200, headers });
   }
 
-  let resolved: { owner: string; repo: string };
+  if (!input.owner || !input.repo) {
+    return Response.json(
+      { error: 'owner and repo are required.' },
+      { status: 400, headers }
+    );
+  }
+  const resolved = { owner: input.owner, repo: input.repo };
   if (input.source === 'upload') {
-    // Upload workspaces have no GitHub identity to resolve: the hub's hints
-    // ARE the identity, and the workspace must already exist (imports route).
-    if (!input.owner || !input.repo) {
-      return Response.json(
-        { error: 'owner and repo are required for uploaded projects.' },
-        { status: 400, headers }
-      );
-    }
-    if (!existsSync(join(repoDir(input.repoId), '.git'))) {
+    // Upload workspaces must already exist (imports route); they can never
+    // be re-cloned.
+    if (!existsSync(join(repoDir(input.projectId), '.git'))) {
       return Response.json(
         {
           error:
@@ -179,30 +180,17 @@ export const POST = async (request: Request) => {
         { status: 422, headers }
       );
     }
-    resolved = { owner: input.owner, repo: input.repo };
-  } else {
-    if (input.owner && input.repo) {
-      seedRepo(input.repoId, { owner: input.owner, repo: input.repo });
-    }
-    const viaGithub = await resolveRepo(input.repoId);
-    if (!viaGithub) {
-      return Response.json(
-        { error: 'Unknown repository — could not resolve owner/repo from repoId.' },
-        { status: 422, headers }
-      );
-    }
-    resolved = viaGithub;
   }
 
   const id = newSessionId();
   // Provider is bound now and never re-read — a mid-life setting change only
   // affects the next fresh session (resume ids are provider-specific).
-  const provider = await getProvider(input.repoId);
+  const provider = await getProvider(input.projectId);
   const [created] = await db
     .insert(previewSession)
     .values({
       id,
-      repoId: input.repoId,
+      projectId: input.projectId,
       source: input.source ?? 'github',
       owner: resolved.owner,
       repo: resolved.repo,
@@ -230,10 +218,10 @@ export const GET = async (request: Request) => {
   if (!auth) {
     return Response.json({ error: 'Unauthorized' }, { status: 401, headers });
   }
-  const repoIdRaw = new URL(request.url).searchParams.get('repoId');
-  // No repoId → all live sessions (server-to-server only: the hub dashboard
+  const projectIdRaw = new URL(request.url).searchParams.get('projectId');
+  // No projectId → all live sessions (server-to-server only: the hub dashboard
   // lists a user's active sessions and filters to their repos itself).
-  if (!repoIdRaw) {
+  if (!projectIdRaw) {
     if (auth.kind !== 'api-key') {
       return Response.json({ error: 'Forbidden' }, { status: 403, headers });
     }
@@ -247,11 +235,11 @@ export const GET = async (request: Request) => {
       { status: 200, headers }
     );
   }
-  const repoId = Number(repoIdRaw);
-  if (!Number.isInteger(repoId) || repoId <= 0) {
-    return Response.json({ error: 'repoId required' }, { status: 400, headers });
+  const projectId = projectIdRaw;
+  if (!isProjectId(projectId)) {
+    return Response.json({ error: 'projectId required' }, { status: 400, headers });
   }
-  if (auth.kind === 'edit-token' && auth.payload.repoId !== repoId) {
+  if (auth.kind === 'edit-token' && auth.payload.projectId !== projectId) {
     return Response.json({ error: 'Forbidden' }, { status: 403, headers });
   }
   // Failed sessions are returned too (newest first) so the hub can show the
@@ -263,7 +251,7 @@ export const GET = async (request: Request) => {
     .from(previewSession)
     .where(
       and(
-        eq(previewSession.repoId, repoId),
+        eq(previewSession.projectId, projectId),
         inArray(previewSession.status, [...LIVE, 'paused', 'failed'])
       )
     )
@@ -272,7 +260,7 @@ export const GET = async (request: Request) => {
   return Response.json(
     {
       session: row
-        ? { ...publicSession(row), geminiTier: await getGeminiTier(repoId) }
+        ? { ...publicSession(row), geminiTier: await getGeminiTier(projectId) }
         : null,
     },
     { status: 200, headers }

@@ -1,3 +1,4 @@
+import { isProjectId } from '@/lib/project-id';
 import { execFile } from 'child_process';
 import { appendFileSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
@@ -122,7 +123,17 @@ export const git = async (
   }
 };
 
-export const repoDir = (repoId: number) => join(config.workspaceDir, String(repoId));
+/**
+ * A project's workspace clone, `<WORKSPACE_DIR>/<projectId>` (one per hub
+ * project). Throws on a missing/invalid id (pre-migration session rows) so a
+ * caller can never operate on the workspace root itself.
+ */
+export const repoDir = (projectId: string | null) => {
+  if (!isProjectId(projectId)) {
+    throw new Error('This session has no project id. Start a new session.');
+  }
+  return join(config.workspaceDir, projectId);
+};
 
 /**
  * Makes `pattern` git-invisible for this clone via `.git/info/exclude` (never
@@ -191,12 +202,12 @@ export const defaultBranch = async (dir: string) => {
  * Either way the working tree is clean and on the target branch.
  */
 export const syncRepo = async (params: {
-  repoId: number;
+  projectId: string | null;
   owner: string;
   repo: string;
   branch: string;
 }) => {
-  const dir = repoDir(params.repoId);
+  const dir = repoDir(params.projectId);
   const url = `https://github.com/${params.owner}/${params.repo}.git`;
   const auth = authForRepo(params.owner, params.repo);
 
@@ -239,10 +250,10 @@ export const syncRepo = async (params: {
  * targets the branch's own HEAD, there is no remote to reset to.
  */
 export const syncLocalRepo = async (params: {
-  repoId: number;
+  projectId: string | null;
   branch: string;
 }) => {
-  const dir = repoDir(params.repoId);
+  const dir = repoDir(params.projectId);
   if (!existsSync(join(dir, '.git'))) {
     throw new Error(
       "This uploaded project's files are missing from the preview server. Re-import the project to continue."

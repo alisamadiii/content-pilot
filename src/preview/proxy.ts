@@ -1,11 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
-import { existsSync, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
-import finalhandler from 'finalhandler';
 import httpProxy from 'http-proxy';
-import serveStatic from 'serve-static';
 import { previewConfig } from './config';
-import { liveServeRoot, repoIdFromLiveLabel } from './live-serve';
 
 /**
  * One reverse proxy for every preview session. Routing key is the leftmost
@@ -62,93 +59,12 @@ export const sessionIdFromHost = (host: string | undefined) => {
   return label;
 };
 
-/** Full Host header normalized for the domain map: lowercase, no port/dot. */
-export const normalizedHost = (host: string | undefined) =>
-  (host || '').split(':')[0]?.toLowerCase().replace(/\.$/, '') || '';
-
 const endedPage = `<!doctype html><meta charset="utf-8"><title>Preview ended</title>
 <body style="font-family:system-ui;display:grid;place-items:center;min-height:100vh;margin:0">
 <div style="text-align:center"><h1 style="font-size:1.25rem">This preview session has ended</h1>
 <p style="color:#666">Close this tab and start a new editing session from your dashboard.</p></div></body>`;
 
-const unpublishedPage = `<!doctype html><meta charset="utf-8"><title>Not published yet</title>
-<body style="font-family:system-ui;display:grid;place-items:center;min-height:100vh;margin:0">
-<div style="text-align:center"><h1 style="font-size:1.25rem">This site hasn't been published yet</h1>
-<p style="color:#666">Publish it from the editor and it will appear here.</p></div></body>`;
-
-// Live-site serving for every project: `site-<repoId>` Host labels map to
-// the published snapshot on disk (see live-serve.ts). One serve-static
-// instance per repoId — the root path is constant and files are re-read from
-// disk per request, so publish swaps need no invalidation.
-const liveServers = new Map<number, ReturnType<typeof serveStatic>>();
-
-const liveServerFor = (repoId: number) => {
-  let server = liveServers.get(repoId);
-  if (!server) {
-    server = serveStatic(liveServeRoot(repoId), {
-      dotfiles: 'deny',
-      index: ['index.html'],
-      // Clean URLs, like every static host: /gallery serves gallery.html
-      // (Astro build.format 'file', plain multi-page HTML sites). Dev servers
-      // already resolve these, so without it a page works in preview only.
-      extensions: ['html'],
-      // Previews and live sites sit behind Cloudflare; published state must
-      // reflect a publish instantly, so nothing may edge-cache.
-      setHeaders: (res) => res.setHeader('cache-control', 'no-store'),
-    });
-    liveServers.set(repoId, server);
-  }
-  return server;
-};
-
-/** Serves a live-site request for a known repoId (snapshot or 404 page). */
-const serveLiveRepo = (
-  req: IncomingMessage,
-  res: ServerResponse,
-  repoId: number
-) => {
-  if (!existsSync(liveServeRoot(repoId))) {
-    res.writeHead(404, {
-      'Content-Type': 'text/html',
-      'cache-control': 'no-store',
-    });
-    res.end(unpublishedPage);
-    return;
-  }
-  liveServerFor(repoId)(req, res, () => notFound(req, res, repoId));
-};
-
-/** A real miss: the site's own 404.html when it ships one, else plain 404. */
-const notFound = (req: IncomingMessage, res: ServerResponse, repoId: number) => {
-  const page = join(liveServeRoot(repoId), '404.html');
-  if (req.method === 'GET' && existsSync(page)) {
-    res.writeHead(404, { 'Content-Type': 'text/html', 'cache-control': 'no-store' });
-    res.end(readFileSync(page));
-    return;
-  }
-  finalhandler(req, res)(undefined);
-};
-
-/** Handles a `site-<id>` live-site request; true when the label matched one. */
-const serveLive = (req: IncomingMessage, res: ServerResponse, label: string) => {
-  const repoId = repoIdFromLiveLabel(label);
-  if (repoId === null) return false;
-  serveLiveRepo(req, res, repoId);
-  return true;
-};
-
-export const startProxy = (
-  port: number = previewConfig.proxyPort,
-  options: {
-    /**
-     * Custom-domain map (host -> repoId) for uploaded projects. Checked on the
-     * FULL normalized host before any session-label routing, so a mapped host
-     * can only ever serve its own published snapshot — never a session.
-     */
-    resolveDomain?: (host: string) => number | null;
-  } = {}
-) => {
-  const resolveDomain = options.resolveDomain ?? (() => null);
+export const startProxy = (port: number = previewConfig.proxyPort) => {
   const proxy = httpProxy.createProxyServer({
     ws: true,
     changeOrigin: true,
@@ -215,15 +131,7 @@ export const startProxy = (
   });
 
   const server = createServer((req, res) => {
-    // Custom domains first, on the full host — never falls through to session
-    // routing (a visitor spoofing a mapped Host must not reach a session).
-    const mapped = resolveDomain(normalizedHost(req.headers.host));
-    if (mapped !== null) {
-      serveLiveRepo(req, res, mapped);
-      return;
-    }
     const id = sessionIdFromHost(req.headers.host);
-    if (serveLive(req, res, id)) return;
     const port = routes.get(id);
     if (!port) {
       res.writeHead(404, { 'Content-Type': 'text/html' });
@@ -234,17 +142,7 @@ export const startProxy = (
   });
 
   server.on('upgrade', (req, socket, head) => {
-    if (resolveDomain(normalizedHost(req.headers.host)) !== null) {
-      // Mapped domains serve static files — no WebSocket.
-      socket.destroy();
-      return;
-    }
     const id = sessionIdFromHost(req.headers.host);
-    if (repoIdFromLiveLabel(id) !== null) {
-      // Live sites are static files — no WebSocket to speak of.
-      socket.destroy();
-      return;
-    }
     const port = routes.get(id);
     if (!port) {
       socket.destroy();
