@@ -2,13 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   clampMaxSessions,
-  geminiTierKey,
   MAX_SESSIONS_CEILING,
   MAX_SESSIONS_KEY,
-  normalizeGeminiTier,
   normalizeProvider,
   providerKey,
-  resolveGeminiKey,
 } from './settings-rules';
 
 // DELIBERATE CHANGE (root-only sites): app-folder override removed (its key
@@ -57,43 +54,4 @@ test('clampMaxSessions clamps both the override and the fallback into 1..ceiling
   assert.equal(clampMaxSessions('21', 3), 20);
   assert.equal(clampMaxSessions(null, 0), 1);
   assert.equal(clampMaxSessions(null, 50), 20);
-});
-
-// ------------------------------------------------- gemini key tier (2026-10-18)
-
-test('geminiTierKey is namespaced per project and distinct from the other keys', () => {
-  assert.equal(geminiTierKey('11111111-1111-4111-8111-111111111111'), 'gemini_tier:11111111-1111-4111-8111-111111111111');
-  assert.notEqual(geminiTierKey('11111111-1111-4111-8111-111111111111'), providerKey('11111111-1111-4111-8111-111111111111'));
-});
-
-test('normalizeGeminiTier: only an explicit "paid" selects paid; everything else is free', () => {
-  assert.equal(normalizeGeminiTier('paid'), 'paid');
-  assert.equal(normalizeGeminiTier('  PAID '), 'paid');
-  assert.equal(normalizeGeminiTier('Paid'), 'paid');
-  assert.equal(normalizeGeminiTier('free'), 'free');
-  assert.equal(normalizeGeminiTier(''), 'free');
-  assert.equal(normalizeGeminiTier(null), 'free');
-  assert.equal(normalizeGeminiTier(undefined), 'free');
-  assert.equal(normalizeGeminiTier('premium'), 'free');
-});
-
-test('resolveGeminiKey: paid tier with a paid key uses the paid key', () => {
-  assert.deepEqual(
-    resolveGeminiKey({ tier: 'paid', freeKey: 'FREE', paidKey: 'PAID' }),
-    { key: 'PAID', tier: 'paid' }
-  );
-});
-
-test('resolveGeminiKey: paid tier with no paid key falls back to the free key (never a hard failure)', () => {
-  assert.deepEqual(
-    resolveGeminiKey({ tier: 'paid', freeKey: 'FREE', paidKey: '' }),
-    { key: 'FREE', tier: 'free' }
-  );
-});
-
-test('resolveGeminiKey: free tier always uses the free key, even when a paid key exists', () => {
-  assert.deepEqual(
-    resolveGeminiKey({ tier: 'free', freeKey: 'FREE', paidKey: 'PAID' }),
-    { key: 'FREE', tier: 'free' }
-  );
 });

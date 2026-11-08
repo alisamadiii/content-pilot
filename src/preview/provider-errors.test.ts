@@ -20,15 +20,9 @@ test('QUOTA_MESSAGE tells the owner nothing was applied and to retry shortly', (
   assert.match(QUOTA_MESSAGE, /send the request again/);
 });
 
-test('isDailyQuotaError: the daily free-tier cap is distinguished from the per-minute burst (2026-10-18)', async () => {
-  const { isDailyQuotaError, DAILY_QUOTA_MESSAGE, QUOTA_MESSAGE } = await import('./provider-errors');
-  assert.ok(isDailyQuotaError('API Error: You have exhausted your daily quota for this model'));
-  assert.ok(isDailyQuotaError('limit: 200, model: ... requests per day'));
-  assert.ok(isDailyQuotaError('GenerateRequestsPerDayPerProjectPerModel exceeded'));
-  // A per-minute burst is NOT a daily cap.
-  assert.ok(!isDailyQuotaError('Quota exceeded for metric: generate_content_free_tier_input_token_count, limit: 250000 per minute'));
-  assert.notEqual(DAILY_QUOTA_MESSAGE, QUOTA_MESSAGE);
-  assert.match(DAILY_QUOTA_MESSAGE, /today/);
-  assert.match(DAILY_QUOTA_MESSAGE, /resets tomorrow|paid AI plan/);
-  assert.doesNotMatch(DAILY_QUOTA_MESSAGE, /minute/);
+test('isQuotaError: daily-cap wording still classifies as a quota error after the free/paid tier removal (2026-11-07)', () => {
+  // The daily-cap branch (DAILY_QUOTA_MESSAGE) was removed with the free tier;
+  // this guards against such stderr degrading to the generic failure text.
+  assert.ok(isQuotaError('API Error: You have exhausted your daily quota for this model'));
+  assert.ok(isQuotaError('GenerateRequestsPerDayPerProjectPerModel exceeded, quota reached'));
 });

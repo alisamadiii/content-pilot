@@ -26,8 +26,6 @@ import {
 } from './attachments';
 import type { ClaudeUsage } from './usage';
 import { previewConfig } from './config';
-import { getGeminiTier } from '@/lib/settings';
-import { resolveGeminiKey } from '@/lib/settings-rules';
 import { emitEvent, emitEvents } from './events';
 import { writeGeminiSystemPrompt } from './gemini-system-prompt';
 import { RECAP_MAX_MESSAGES, renderRecap, sanitizeForClient } from './recap';
@@ -43,8 +41,6 @@ import {
 } from './same-as-before';
 import { isVagueStylingRequest, VAGUE_REPLY } from './vague-guard';
 import {
-  DAILY_QUOTA_MESSAGE,
-  isDailyQuotaError,
   isQuotaError,
   QUOTA_MESSAGE,
 } from './provider-errors';
@@ -248,23 +244,6 @@ const processMessage = async (row: MessageRow) => {
     provider === 'gemini' ? runSessionGemini : runSessionClaude;
   const costIsCumulative = provider === 'claude';
 
-  // Gemini key tier (free/paid) is read live per message from the per-project
-  // gemini_tier setting (no session column — the key choice can't corrupt
-  // resume state, which gemini doesn't use). Undefined for Claude.
-  let geminiApiKey: string | undefined;
-  let geminiTier: 'free' | 'paid' | undefined;
-  if (provider === 'gemini') {
-    const resolved = resolveGeminiKey({
-      tier: sessionRow.projectId
-        ? await getGeminiTier(sessionRow.projectId)
-        : 'free',
-      freeKey: previewConfig.geminiApiKey,
-      paidKey: previewConfig.geminiApiKeyPaid,
-    });
-    geminiApiKey = resolved.key;
-    geminiTier = resolved.tier;
-  }
-
   // Previews run without an AI key; chat can't. Fail instantly with a clear
   // reason instead of letting the agent retry a missing/bad key for minutes.
   const aiDown = aiUnavailableReason(provider);
@@ -444,7 +423,6 @@ const processMessage = async (row: MessageRow) => {
       claudeSessionId: resumeId,
       signal: cancelController.signal,
       systemPromptPath,
-      geminiApiKey,
       onEvent,
     });
 
@@ -467,7 +445,6 @@ const processMessage = async (row: MessageRow) => {
         claudeSessionId: null,
         signal: cancelController.signal,
         systemPromptPath,
-        geminiApiKey,
         onEvent,
       });
     }
@@ -529,9 +506,7 @@ const processMessage = async (row: MessageRow) => {
           error: run.timedOut
             ? `The edit took too long and was stopped after ${Math.round(previewConfig.messageTimeoutMs / 60000)} minutes, so nothing was applied. Please try a smaller or simpler request.`
             : isQuotaError(run.stderr)
-              ? isDailyQuotaError(run.stderr)
-                ? DAILY_QUOTA_MESSAGE
-                : QUOTA_MESSAGE
+              ? QUOTA_MESSAGE
               : stderrForClient
               ? `The AI could not complete this request, so nothing was applied.\n\nThe error was: ${stderrForClient}\n\nYou can try again, or share this error with your developer.`
               : 'The AI could not complete this request. Please try again.',
@@ -561,7 +536,6 @@ const processMessage = async (row: MessageRow) => {
         claudeSessionId,
         signal: cancelController.signal,
         systemPromptPath,
-        geminiApiKey,
         onEvent,
       });
       usage = addUsage(usage, honest.usage, !costIsCumulative);
@@ -671,7 +645,6 @@ const processMessage = async (row: MessageRow) => {
           claudeSessionId,
           signal: cancelController.signal,
           systemPromptPath,
-          geminiApiKey,
           onEvent,
         });
         usage = addUsage(usage, repair.usage, !costIsCumulative);
@@ -746,7 +719,7 @@ const processMessage = async (row: MessageRow) => {
       costIsCumulative
     );
     log(
-      `session ${row.sessionId}: message #${row.id} done${sha ? ` — ${sha.slice(0, 7)}` : ' (no changes)'} [${provider}${geminiTier ? `/${geminiTier}` : ''} tools=${toolCalls} in=${usage.inputTokens ?? '?'} out=${usage.outputTokens ?? '?'}]`
+      `session ${row.sessionId}: message #${row.id} done${sha ? ` — ${sha.slice(0, 7)}` : ' (no changes)'} [${provider} tools=${toolCalls} in=${usage.inputTokens ?? '?'} out=${usage.outputTokens ?? '?'}]`
     );
   } catch (error) {
     const message = sanitize((error as Error).message || 'unknown error');

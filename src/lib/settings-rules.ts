@@ -6,16 +6,10 @@ import { previewConfig } from '@/preview/config';
 /** Per-project AI provider override key (`ai_provider:<projectId>`). */
 export const providerKey = (projectId: string) => `ai_provider:${projectId}`;
 
-/** Per-project Gemini key tier key (`gemini_tier:<projectId>`). */
-export const geminiTierKey = (projectId: string) => `gemini_tier:${projectId}`;
-
 export const MAX_SESSIONS_KEY = 'max_preview_sessions';
 export const MAX_SESSIONS_CEILING = 20;
 
 export type AiProvider = 'claude' | 'gemini';
-
-/** Which Gemini key a project's sessions use. Free is the default. */
-export type GeminiTier = 'free' | 'paid';
 
 /**
  * Only the exact string `claude` (any case, trimmed) selects Claude; anything
@@ -23,30 +17,6 @@ export type GeminiTier = 'free' | 'paid';
  */
 export const normalizeProvider = (raw: string | null | undefined): AiProvider =>
   raw?.trim().toLowerCase() === 'claude' ? 'claude' : 'gemini';
-
-/**
- * Only the exact string `paid` (any case, trimmed) selects the paid Gemini
- * key; anything else (unset, typo, `free`) falls back to the free key — the
- * default for the many unpaid client sites.
- */
-export const normalizeGeminiTier = (raw: string | null | undefined): GeminiTier =>
-  raw?.trim().toLowerCase() === 'paid' ? 'paid' : 'free';
-
-/**
- * Picks the Gemini API key for a tier. Paid is honored only when a paid key is
- * actually configured; a paid request with no paid key degrades to the free
- * key (never a hard failure), and the returned `tier` reflects what was used.
- */
-export const resolveGeminiKey = (params: {
-  tier: GeminiTier;
-  freeKey: string;
-  paidKey: string;
-}): { key: string; tier: GeminiTier } => {
-  if (params.tier === 'paid' && params.paidKey) {
-    return { key: params.paidKey, tier: 'paid' };
-  }
-  return { key: params.freeKey, tier: 'free' };
-};
 
 /**
  * Effective concurrent-session cap: the stored override when it is a positive

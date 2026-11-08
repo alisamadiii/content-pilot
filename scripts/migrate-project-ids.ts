@@ -7,7 +7,7 @@
  * (packages/drizzle/scripts/export-project-map.ts). For every entry:
  *  - renames the workspace dir <WORKSPACE_DIR>/<repoId> -> <projectId>
  *  - sets preview_session.project_id on rows with that repo_id
- *  - re-keys the ai_provider:<repoId> / gemini_tier:<repoId> settings rows
+ *  - re-keys the ai_provider:<repoId> settings rows
  * Idempotent: an already-renamed dir, filled project_id or moved key is
  * skipped, so it can be re-run safely. Run with no live preview sessions.
  */
@@ -18,7 +18,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { client, db } from '../src/db';
 import { appSetting, previewSession } from '../src/db/schema';
 import { isProjectId } from '../src/lib/project-id';
-import { geminiTierKey, providerKey } from '../src/lib/settings-rules';
+import { providerKey } from '../src/lib/settings-rules';
 import { config } from '../src/worker/config';
 
 const args = process.argv.slice(2);
@@ -89,10 +89,9 @@ const main = async () => {
     }
 
     // 3. Per-project settings keys.
-    for (const prefix of ['ai_provider', 'gemini_tier'] as const) {
+    for (const prefix of ['ai_provider'] as const) {
       const oldKey = `${prefix}:${repoIdText}`;
-      const newKey =
-        prefix === 'ai_provider' ? providerKey(projectId) : geminiTierKey(projectId);
+      const newKey = providerKey(projectId);
       const [row] = await db
         .select()
         .from(appSetting)

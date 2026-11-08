@@ -9,7 +9,7 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import { repoDir } from '@/worker/git';
 import { isProjectId } from '@/lib/project-id';
-import { getGeminiTier, getMaxSessions, getProvider } from '@/lib/settings';
+import { getMaxSessions, getProvider } from '@/lib/settings';
 import {
   authenticateSessionRequest,
   newSessionId,
@@ -259,9 +259,7 @@ export const GET = async (request: Request) => {
     .limit(1);
   return Response.json(
     {
-      session: row
-        ? { ...publicSession(row), geminiTier: await getGeminiTier(projectId) }
-        : null,
+      session: row ? publicSession(row) : null,
     },
     { status: 200, headers }
   );

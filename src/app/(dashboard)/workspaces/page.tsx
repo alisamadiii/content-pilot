@@ -3,29 +3,20 @@ import { db } from '@/db';
 import { appSetting } from '@/db/schema';
 import { repoColor } from '@/lib/repo-color';
 import { listWorkspaces } from '@/lib/repos';
-import { DeleteCloneButton, GeminiTierForm, ProviderForm } from './repo-actions';
+import { DeleteCloneButton, ProviderForm } from './repo-actions';
 
 export const dynamic = 'force-dynamic';
 
 const ReposPage = async () => {
-  const [rows, providerRows, tierRows] =
-    await Promise.all([
-      listWorkspaces(),
-      db.select().from(appSetting).where(like(appSetting.key, 'ai_provider:%')),
-      db.select().from(appSetting).where(like(appSetting.key, 'gemini_tier:%')),
-    ]);
+  const [rows, providerRows] = await Promise.all([
+    listWorkspaces(),
+    db.select().from(appSetting).where(like(appSetting.key, 'ai_provider:%')),
+  ]);
   // Default gemini; only an explicit `claude` value selects Claude.
   const providers = new Map(
     providerRows.map((r) => [
       r.key.slice('ai_provider:'.length),
       r.value === 'claude' ? 'claude' : 'gemini',
-    ])
-  );
-  // Default free; only an explicit `paid` value selects the paid key.
-  const tiers = new Map(
-    tierRows.map((r) => [
-      r.key.slice('gemini_tier:'.length),
-      r.value === 'paid' ? 'paid' : 'free',
     ])
   );
 
@@ -47,7 +38,6 @@ const ReposPage = async () => {
               <th>repository</th>
               <th>branch</th>
               <th>ai</th>
-              <th>gemini key</th>
               <th></th>
             </tr>
           </thead>
@@ -85,17 +75,6 @@ const ReposPage = async () => {
                         (providers.get(row.projectId) ?? 'gemini') as
                           | 'claude'
                           | 'gemini'
-                      }
-                    />
-                  </td>
-                  <td>
-                    <GeminiTierForm
-                      projectId={row.projectId}
-                      value={
-                        (tiers.get(row.projectId) ?? 'free') as 'free' | 'paid'
-                      }
-                      disabled={
-                        (providers.get(row.projectId) ?? 'gemini') === 'claude'
                       }
                     />
                   </td>

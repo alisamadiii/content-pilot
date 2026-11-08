@@ -12,12 +12,8 @@ import {
   PREVIEW_SESSION_LIVE_STATUSES,
 } from '@/db/schema';
 import { auth } from '@/lib/auth';
-import {
-  geminiTierKey,
-  providerKey,
-  setSetting,
-} from '@/lib/settings';
-import { normalizeGeminiTier, normalizeProvider } from '@/lib/settings-rules';
+import { providerKey, setSetting } from '@/lib/settings';
+import { normalizeProvider } from '@/lib/settings-rules';
 import { config } from '@/worker/config';
 import { isProjectId } from '@/lib/project-id';
 
@@ -84,22 +80,5 @@ export const setProvider = async (projectId: string, value: string) => {
     throw new Error('Provider must be claude or gemini.');
   }
   await setSetting(providerKey(projectId), normalizeProvider(value));
-  revalidatePath('/workspaces');
-};
-
-/**
- * Sets a project's Gemini key tier: `free` (default, unpaid sites) or `paid`.
- * Read live per message, so the change takes effect on the next message. Only
- * matters when the provider is gemini; harmless for claude projects.
- */
-export const setGeminiTier = async (projectId: string, value: string) => {
-  await requireSession();
-  if (!isProjectId(projectId)) {
-    throw new Error('Invalid project id.');
-  }
-  if (value !== 'free' && value !== 'paid') {
-    throw new Error('Gemini tier must be free or paid.');
-  }
-  await setSetting(geminiTierKey(projectId), normalizeGeminiTier(value));
   revalidatePath('/workspaces');
 };
