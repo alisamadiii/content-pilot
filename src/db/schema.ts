@@ -299,3 +299,39 @@ export const previewEvent = pgTable(
   (table) => [index('idx_preview_event_session').on(table.sessionId, table.id)]
 );
 
+
+// ---------------------------------------------------------------------------
+// Netlify deploys (upload projects)
+// ---------------------------------------------------------------------------
+
+export const NETLIFY_DEPLOY_STATUS_VALUES = [
+  'queued',
+  'building',
+  'uploading',
+  'ready',
+  'error',
+  // A newer publish of the same project was queued before this one ran.
+  'skipped',
+] as const;
+export type NetlifyDeployStatus = (typeof NETLIFY_DEPLOY_STATUS_VALUES)[number];
+
+// One row per hub publish of an upload project: build the default branch and
+// upload the output to the project's Netlify site. The Netlify token is never
+// stored: it lives in the API process's memory for the queued job only.
+export const netlifyDeploy = pgTable(
+  'netlify_deploy',
+  {
+    id: serial('id').primaryKey(),
+    projectId: text('project_id').notNull(),
+    // Default-branch commit that was built (resolved when the job starts).
+    sha: text('sha').notNull().default(''),
+    siteId: text('site_id').notNull(),
+    status: text('status').$type<NetlifyDeployStatus>().notNull().default('queued'),
+    // Client-facing failure message.
+    error: text('error'),
+    netlifyDeployId: text('netlify_deploy_id'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    finishedAt: timestamp('finished_at'),
+  },
+  (table) => [index('idx_netlify_deploy_project').on(table.projectId, table.id)]
+);
