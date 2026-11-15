@@ -1,14 +1,19 @@
 import { isProjectId } from '@/lib/project-id';
-import { createWriteStream, existsSync } from 'fs';
+import { existsSync } from 'fs';
 import { mkdir, readdir, rename, rm } from 'fs/promises';
 import { join } from 'path';
-import { Readable, Transform } from 'stream';
-import { pipeline } from 'stream/promises';
 import { verifyApiKey } from '@/lib/api-key';
+import {
+  authorFromHeaders,
+  declaredTooLarge,
+  receiveZip,
+} from '@/lib/import-upload';
 import { verifyImportToken } from '@/lib/import-token';
 import { extractCredentials, sessionCorsHeaders } from '@/lib/request-credentials';
+import { queueBackup } from '@/worker/backup';
 import { config, ensureWorkspace } from '@/worker/config';
 import { git, repoDir } from '@/worker/git';
+import { importsRoot } from '@/worker/replace';
 import { extractZip, stripWrapperDir, ZipError } from '@/worker/zip-extract';
 import { checkFramework } from '@/preview/framework';
 
@@ -27,10 +32,6 @@ export const runtime = 'nodejs';
  * multipart: `request.formData()` would buffer the whole archive in memory.
  */
 
-const MAX_ZIP_BYTES = 100 * 1024 * 1024;
-
-const importsRoot = () => join(config.workspaceDir, '.imports');
-
 export const OPTIONS = async (request: Request) =>
   new Response(null, {
     status: 204,
@@ -40,17 +41,8 @@ export const OPTIONS = async (request: Request) =>
 const authenticate = async (request: Request, projectId: string) => {
   const { apiKeyCandidate, editTokenCandidate } = extractCredentials(request);
   if (await verifyApiKey(apiKeyCandidate)) return true;
-  const token = verifyImportToken(editTokenCandidate);
+  const token = verifyImportToken(editTokenCandidate, 'import');
   return token !== null && token.projectId === projectId;
-};
-
-/** One header line of commit identity, length-capped; null when absent. */
-const authorFromHeaders = (request: Request) => {
-  const name = (request.headers.get('x-author-name') || '').trim().slice(0, 200);
-  const email = (request.headers.get('x-author-email') || '')
-    .trim()
-    .slice(0, 320);
-  return name && email ? { name, email } : null;
 };
 
 export const POST = async (request: Request) => {
@@ -75,8 +67,7 @@ export const POST = async (request: Request) => {
     );
   }
 
-  const declared = Number(request.headers.get('content-length') || 0);
-  if (declared > MAX_ZIP_BYTES) {
+  if (declaredTooLarge(request)) {
     return Response.json(
       { error: 'Zip is larger than 100 MB.' },
       { status: 413, headers }
@@ -98,24 +89,7 @@ export const POST = async (request: Request) => {
     await mkdir(importsRoot(), { recursive: true });
     await rm(staging, { recursive: true, force: true });
 
-    // Stream the body to disk, counting real bytes — content-length can lie.
-    // Counting happens in-pipeline (a bare 'data' listener would start the
-    // flow before the file stream is attached and drop bytes).
-    let received = 0;
-    const body = Readable.fromWeb(
-      request.body as import('stream/web').ReadableStream
-    );
-    const counter = new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        received += chunk.length;
-        if (received > MAX_ZIP_BYTES) {
-          callback(new ZipError('Zip is larger than 100 MB.', 413));
-          return;
-        }
-        callback(null, chunk);
-      },
-    });
-    await pipeline(body, counter, createWriteStream(zipPath));
+    await receiveZip(request, zipPath);
 
     const { files } = await extractZip(zipPath, staging);
     await stripWrapperDir(staging);
@@ -167,6 +141,8 @@ export const POST = async (request: Request) => {
     // Same volume — atomic publish of the workspace dir.
     await rename(staging, dir);
     await rm(zipPath, { force: true }).catch(() => undefined);
+    // First copy of the source off this server (no-op when backups are off).
+    void queueBackup(projectId, name);
 
     return Response.json(
       { projectId, files, framework: check.framework },

@@ -9,15 +9,22 @@ import { isProjectId } from './project-id';
  * verifyEditToken rejects any payload with a `scope` field, and this verifier
  * requires it. The token authorizes exactly one zip upload for one project —
  * the import route 409s once the workspace dir exists.
+ *
+ * `scope: 'replace'` authorizes one source replace (PUT /api/v1/imports/:id)
+ * on an existing upload project. Callers name the scope they accept, so an
+ * import token can't replace and a replace token can't create.
  */
+export type ImportTokenScope = 'import' | 'replace';
+
 export interface ImportTokenPayload {
   projectId: string;
-  scope: 'import';
+  scope: ImportTokenScope;
   exp: number;
 }
 
 export const verifyImportToken = (
-  value: string | null
+  value: string | null,
+  scope: ImportTokenScope = 'import'
 ): ImportTokenPayload | null => {
   const secret = process.env.EDIT_TOKEN_SECRET;
   if (!secret || !value) return null;
@@ -49,7 +56,7 @@ export const verifyImportToken = (
 
   if (
     !isProjectId(payload?.projectId) ||
-    payload?.scope !== 'import' ||
+    payload?.scope !== scope ||
     typeof payload?.exp !== 'number' ||
     payload.exp <= Math.floor(Date.now() / 1000)
   ) {

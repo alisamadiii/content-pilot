@@ -9,6 +9,7 @@ import {
   sessionCorsHeaders,
 } from '@/lib/session-auth';
 import { removeSessionUploads } from '@/lib/uploads';
+import { queueBackup } from '@/worker/backup';
 import { previewConfig, previewUrlFor } from '@/preview/config';
 import {
   git,
@@ -200,6 +201,10 @@ export const POST = async (
           { error: 'merge_conflict' },
           { status: 409, headers }
         );
+      }
+      if (row.source === 'upload' && squash.changed) {
+        // Mirror the new main to the GitHub backup org (fire-and-forget).
+        void queueBackup(row.projectId ?? '', row.repo);
       }
       return Response.json(
         { id, sha: squash.sha, changed: squash.changed },

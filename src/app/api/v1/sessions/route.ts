@@ -8,6 +8,7 @@ import {
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { repoDir } from '@/worker/git';
+import { isReplacing } from '@/worker/replace';
 import { isProjectId } from '@/lib/project-id';
 import { getMaxSessions, getProvider } from '@/lib/settings';
 import {
@@ -97,6 +98,17 @@ export const POST = async (request: Request) => {
     return Response.json(
       { error: 'Invalid branch name.' },
       { status: 400, headers }
+    );
+  }
+
+  // A source replace is swapping the workspace; nothing may boot on it.
+  if (isReplacing(input.projectId)) {
+    return Response.json(
+      {
+        error: 'A new version of this site is being imported. Try again in a moment.',
+        code: 'replace_in_progress',
+      },
+      { status: 409, headers }
     );
   }
 

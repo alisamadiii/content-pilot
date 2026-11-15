@@ -46,6 +46,9 @@ export const sanitize = (text: string) => {
   for (const secret of githubAppSecrets()) {
     out = out.split(secret).join('[REDACTED]');
   }
+  if (config.githubBackupToken) {
+    out = out.split(config.githubBackupToken).join('[REDACTED]');
+  }
   return out.replace(
     /Authorization: Basic [A-Za-z0-9+/=]+/g,
     'Authorization: [REDACTED]'

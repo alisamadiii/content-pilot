@@ -9,6 +9,11 @@ export const config = {
   // git falls back to the system credential helper (local dev only).
   githubAppId: process.env.GITHUB_APP_ID || '',
   githubAppPrivateKey: process.env.GITHUB_APP_PRIVATE_KEY || '',
+  // Private GitHub org that mirrors every uploaded project's `main`
+  // (src/worker/backup.ts). Fine-grained PAT, resource owner = the org,
+  // Administration RW + Contents RW. Both empty = backups off.
+  githubBackupOrg: process.env.GITHUB_BACKUP_ORG || '',
+  githubBackupToken: process.env.GITHUB_BACKUP_TOKEN || '',
   workspaceDir: resolve(process.env.WORKSPACE_DIR || './workspace'),
   gitAuthorName: process.env.GIT_AUTHOR_NAME || 'AI Edit Bot',
   gitAuthorEmail: process.env.GIT_AUTHOR_EMAIL || 'ai-edits@localhost',

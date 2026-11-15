@@ -64,3 +64,26 @@ test('plain edit tokens still verify after the scope rejection', () => {
     exp: future,
   });
 });
+
+// Replace scope (hub "Import" on an existing upload project, 2026-11-15).
+
+test('a replace token verifies only when the replace scope is asked for', () => {
+  const token = mint({ projectId: P1, scope: 'replace', exp: future });
+  assert.deepEqual(verifyImportToken(token, 'replace'), {
+    projectId: P1,
+    scope: 'replace',
+    exp: future,
+  });
+  assert.equal(verifyImportToken(token), null);
+  assert.equal(verifyImportToken(token, 'import'), null);
+});
+
+test('an import token cannot replace', () => {
+  const token = mint({ projectId: P1, scope: 'import', exp: future });
+  assert.equal(verifyImportToken(token, 'replace'), null);
+});
+
+test('edit tokens and replace tokens never cross', () => {
+  assert.equal(verifyImportToken(mint({ projectId: P1, exp: future }), 'replace'), null);
+  assert.equal(verifyEditToken(mint({ projectId: P1, scope: 'replace', exp: future })), null);
+});
