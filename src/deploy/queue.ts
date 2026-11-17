@@ -2,15 +2,16 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '@/db';
 import { netlifyDeploy, type NetlifyDeployStatus } from '@/db/schema';
 import { defaultBranch, git, repoDir } from '../worker/git';
-import { BuildError, withBuiltSite } from './build';
-import { deployFolder, NetlifyError } from './netlify';
+import { BuildError, withSourceZip } from './build';
+import { buildOnNetlify, NetlifyError, waitForNetlifyDeploy } from './netlify';
 
 /**
  * In-process deploy queue of the API server. The hub's publish POSTs a job
  * with the project's Netlify token; the token stays in this module's memory
  * only (never in the DB), so a restart fails the in-flight jobs and the client
- * redeploys from the hub's Netlify page. One build at a time across all
- * projects; a newer job for the same project supersedes a queued older one.
+ * redeploys from the hub's Netlify page. One upload at a time across all
+ * projects (the build itself runs on Netlify and is followed in the
+ * background); a newer job for the same project supersedes a queued older one.
  */
 
 const log = (message: string) => {
@@ -82,28 +83,43 @@ export const latestDeploy = async (projectId: string) => {
   return row ?? null;
 };
 
+const failMessage = (error: unknown) =>
+  error instanceof BuildError || error instanceof NetlifyError
+    ? error.message
+    : 'The deploy failed unexpectedly. Try again.';
+
+/** Follows Netlify's build of an uploaded job until it's live or failed. */
+const followBuild = async (row: NetlifyDeployRow, token: string, deployId: string) => {
+  try {
+    await waitForNetlifyDeploy(token, deployId);
+    await setStatus(row.id, { status: 'ready', finishedAt: new Date() });
+    log(`deployed ${row.projectId} → ${deployId}`);
+  } catch (error) {
+    log(`build failed ${row.projectId}: ${error instanceof Error ? error.message : error}`);
+    await setStatus(row.id, { status: 'error', error: failMessage(error), finishedAt: new Date() });
+  }
+};
+
+// Uploads the source; Netlify builds it with the site's env vars. The build is
+// followed without blocking the queue, so one slow build doesn't hold up
+// other projects' publishes.
 const runJob = async (row: NetlifyDeployRow, token: string) => {
   const dir = repoDir(row.projectId);
   const branch = await defaultBranch(dir);
   const sha = (await git(dir, ['rev-parse', `refs/heads/${branch}`])).trim();
-  await setStatus(row.id, { status: 'building', sha });
-  log(`build ${row.projectId} @ ${sha.slice(0, 7)}`);
+  await setStatus(row.id, { status: 'uploading', sha });
+  log(`upload ${row.projectId} @ ${sha.slice(0, 7)}`);
 
-  await withBuiltSite({ projectId: row.projectId, sha }, async (out) => {
-    await setStatus(row.id, { status: 'uploading' });
-    const deployId = await deployFolder({
-      dir: out,
+  const deployId = await withSourceZip({ projectId: row.projectId, sha }, (zip) =>
+    buildOnNetlify({
+      zip,
       siteId: row.siteId,
       token,
       title: `Published from the Client Hub (${sha.slice(0, 7)})`,
-    });
-    await setStatus(row.id, {
-      status: 'ready',
-      netlifyDeployId: deployId,
-      finishedAt: new Date(),
-    });
-    log(`deployed ${row.projectId} → ${deployId}`);
-  });
+    })
+  );
+  await setStatus(row.id, { status: 'building', netlifyDeployId: deployId });
+  void followBuild(row, token, deployId);
 };
 
 const drain = async () => {
@@ -125,12 +141,8 @@ const drain = async () => {
       try {
         await runJob(row, token);
       } catch (error) {
-        const message =
-          error instanceof BuildError || error instanceof NetlifyError
-            ? error.message
-            : 'The deploy failed unexpectedly. Try again.';
         log(`failed ${row.projectId}: ${error instanceof Error ? error.message : error}`);
-        await setStatus(id, { status: 'error', error: message, finishedAt: new Date() });
+        await setStatus(id, { status: 'error', error: failMessage(error), finishedAt: new Date() });
       }
     }
   } finally {

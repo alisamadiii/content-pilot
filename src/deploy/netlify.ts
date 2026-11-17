@@ -3,9 +3,10 @@ import { readFile, readdir } from 'fs/promises';
 import { join, relative, sep } from 'path';
 
 /**
- * Netlify file-digest deploy: POST every file's sha1, Netlify answers with the
- * ones it doesn't already have, and only those are uploaded. No zip, and an
- * unchanged site re-deploys almost for free.
+ * Netlify deploys. Hub publishes use the Build API (buildOnNetlify): the source
+ * zip is built on Netlify with the site's own env vars. deployFolder is the
+ * file-digest deploy of an already-built folder (POST every file's sha1,
+ * upload only the ones Netlify lacks).
  */
 
 const API = 'https://api.netlify.com/api/v1';
@@ -96,4 +97,55 @@ export const deployFolder = async (params: {
     );
   }
   return deploy.id;
+};
+
+/**
+ * Netlify Build API: uploads a source zip and Netlify installs, builds and
+ * publishes it to production (netlify.toml decides the command and publish
+ * dir). Returns the deploy id to follow.
+ */
+export const buildOnNetlify = async (params: {
+  zip: Buffer;
+  siteId: string;
+  token: string;
+  title: string;
+}): Promise<string> => {
+  const form = new FormData();
+  form.set('title', params.title);
+  form.set('zip', new Blob([new Uint8Array(params.zip)], { type: 'application/zip' }), 'site.zip');
+  const build = await netlify<{ deploy_id?: string }>(
+    params.token,
+    `/sites/${params.siteId}/builds`,
+    { method: 'POST', body: form }
+  );
+  if (!build.deploy_id) throw new NetlifyError('Netlify did not start a build.');
+  return build.deploy_id;
+};
+
+const FAILED_STATES = new Set(['error', 'rejected']);
+
+/** Polls a deploy until Netlify finishes it. Throws NetlifyError on a failed build. */
+export const waitForNetlifyDeploy = async (
+  token: string,
+  deployId: string,
+  { intervalMs = 5_000, timeoutMs = 30 * 60_000 } = {}
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const deploy = await netlify<{ state: string; error_message?: string | null }>(
+      token,
+      `/deploys/${deployId}`,
+      { method: 'GET' }
+    );
+    if (deploy.state === 'ready') return;
+    if (FAILED_STATES.has(deploy.state)) {
+      throw new NetlifyError(
+        `The Netlify build failed: ${deploy.error_message || 'see the deploy log on Netlify.'}`
+      );
+    }
+    if (Date.now() > deadline) {
+      throw new NetlifyError('Netlify is still building. Check the deploy on Netlify.');
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
 };
