@@ -9,7 +9,7 @@ import {
   sessionCorsHeaders,
 } from '@/lib/session-auth';
 import { removeSessionUploads } from '@/lib/uploads';
-import { queueBackup } from '@/worker/backup';
+import { isBackupRepoName, queueBackup } from '@/worker/backup';
 import { previewConfig, previewUrlFor } from '@/preview/config';
 import {
   git,
@@ -30,7 +30,12 @@ const actionSchema = z.discriminatedUnion('action', [
   // Publish: squash the session branch into the default branch as one commit
   // authored by the project owner and push (GitHub projects). The site's own
   // host (Netlify etc.) deploys from there. The hub closes the session after.
-  z.object({ action: z.literal('publish') }),
+  // Upload projects: `backupRepo` is the org repo the hub linked; main is
+  // pushed there after a changed squash.
+  z.object({
+    action: z.literal('publish'),
+    backupRepo: z.string().refine(isBackupRepoName).optional(),
+  }),
 ]);
 
 const loadAuthorized = async (request: Request, id: string) => {
@@ -202,9 +207,9 @@ export const POST = async (
           { status: 409, headers }
         );
       }
-      if (row.source === 'upload' && squash.changed) {
-        // Mirror the new main to the GitHub backup org (fire-and-forget).
-        void queueBackup(row.projectId ?? '', row.repo);
+      if (row.source === 'upload' && squash.changed && parsed.data.backupRepo) {
+        // Mirror the new main to the hub-linked backup repo (fire-and-forget).
+        void queueBackup(row.projectId ?? '', parsed.data.backupRepo);
       }
       return Response.json(
         { id, sha: squash.sha, changed: squash.changed },

@@ -10,8 +10,9 @@ export const config = {
   githubAppId: process.env.GITHUB_APP_ID || '',
   githubAppPrivateKey: process.env.GITHUB_APP_PRIVATE_KEY || '',
   // Private GitHub org that mirrors every uploaded project's `main`
-  // (src/worker/backup.ts). Fine-grained PAT, resource owner = the org,
-  // Administration RW + Contents RW. Both empty = backups off.
+  // (src/worker/backup.ts). The hub creates/links the repos; pilot only
+  // pushes. Fine-grained PAT, resource owner = the org, Contents RW.
+  // Both empty = backups off.
   githubBackupOrg: process.env.GITHUB_BACKUP_ORG || '',
   githubBackupToken: process.env.GITHUB_BACKUP_TOKEN || '',
   workspaceDir: resolve(process.env.WORKSPACE_DIR || './workspace'),

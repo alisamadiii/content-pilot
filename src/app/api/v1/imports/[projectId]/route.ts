@@ -21,7 +21,7 @@ import { extractCredentials, sessionCorsHeaders } from '@/lib/request-credential
 import { removeProjectSettings } from '@/lib/settings';
 import { isProjectId } from '@/lib/project-id';
 import { removeSessionUploads } from '@/lib/uploads';
-import { archiveBackupRepo, backupState, queueBackup } from '@/worker/backup';
+import { backupState } from '@/worker/backup';
 import { config, ensureWorkspace } from '@/worker/config';
 import { hasOrigin, repoDir } from '@/worker/git';
 import {
@@ -42,8 +42,8 @@ export const runtime = 'nodejs';
  *    deletes the project — workspace clone, all preview sessions (+ their transcripts/events/attachments/staged
  *    uploads), and the per-project settings overrides. Any live editing session
  *    is auto-closed (its dev server killed by pid), so delete never 409s.
- *    Runs for GitHub and upload projects alike. An upload project's GitHub
- *    backup repo is archived, never deleted.
+ *    Runs for GitHub and upload projects alike. The hub archives the
+ *    project's GitHub backup repo.
  *  - POST: replace an upload project's whole source with a new zip (hub
  *    "Import" inside a project). Api key or a one-time `scope:'replace'`
  *    token; the browser streams the zip here directly, like the first import.
@@ -135,8 +135,6 @@ export const DELETE = async (
     return Response.json({ error: 'Invalid projectId' }, { status: 400 });
   }
   if (existsSync(target)) {
-    // Read the backup repo name from the clone before it's gone.
-    await archiveBackupRepo(target);
     await rm(target, { recursive: true, force: true });
   }
   // Per-project setting overrides die with the project.
@@ -288,7 +286,6 @@ export const POST = async (
       name,
       author: authorFromHeaders(request),
     });
-    void queueBackup(projectId, name);
     return Response.json(
       { projectId, files, framework: check.framework, sha },
       { status: 200, headers }

@@ -10,7 +10,6 @@ import {
 } from '@/lib/import-upload';
 import { verifyImportToken } from '@/lib/import-token';
 import { extractCredentials, sessionCorsHeaders } from '@/lib/request-credentials';
-import { queueBackup } from '@/worker/backup';
 import { config, ensureWorkspace } from '@/worker/config';
 import { git, repoDir } from '@/worker/git';
 import { importsRoot } from '@/worker/replace';
@@ -141,8 +140,6 @@ export const POST = async (request: Request) => {
     // Same volume — atomic publish of the workspace dir.
     await rename(staging, dir);
     await rm(zipPath, { force: true }).catch(() => undefined);
-    // First copy of the source off this server (no-op when backups are off).
-    void queueBackup(projectId, name);
 
     return Response.json(
       { projectId, files, framework: check.framework },

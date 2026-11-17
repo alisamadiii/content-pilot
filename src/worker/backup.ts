@@ -5,51 +5,33 @@ import { git, gitAuthArgs, hasOrigin, repoDir, sanitize } from './git';
 
 /**
  * GitHub backup for uploaded (no-GitHub) projects. Their workspace is the only
- * copy of the source, so after every import, publish and replace the local
- * `main` is force-pushed to a private repo in GITHUB_BACKUP_ORG. The workspace
+ * copy of the source, so on publish and replace the hub names a repo in
+ * GITHUB_BACKUP_ORG and the local `main` is force-pushed there. The hub owns
+ * which repo (it creates and links them); pilot only pushes. The workspace
  * stays the source of truth: the push goes to an explicit URL, never an
  * `origin` remote (hasOrigin/baseRef would flip the project into GitHub mode).
  *
  * State lives in the clone's own git config, no DB column:
- *  - cp.backupRepo   repo name in the org (set on first push)
+ *  - cp.backupRepo   repo name in the org (last push target)
  *  - cp.backupSha    last pushed main sha
  *  - cp.backupError  last failure, cleared on success
  * Failures never reach the caller; the next push catches everything up.
  */
 
-const API = 'https://api.github.com';
-
 export const isBackupConfigured = () =>
   !!(config.githubBackupOrg && config.githubBackupToken);
 
+/** A plain repo name in the org (no owner, no path, no URL tricks). */
+export const isBackupRepoName = (repo: string) =>
+  /^[A-Za-z0-9._-]{1,100}$/.test(repo) && repo !== '.' && repo !== '..';
+
 export interface BackupDeps {
-  /** GitHub REST transport (tests inject a fake). */
-  api?: typeof fetch;
   /** Push target for org/repo (tests point it at a local bare repo). */
   remoteFor?: (org: string, repo: string) => string;
 }
 
 const defaultRemote = (org: string, repo: string) =>
   `https://github.com/${org}/${repo}.git`;
-
-const ghHeaders = () => ({
-  Authorization: `Bearer ${config.githubBackupToken}`,
-  Accept: 'application/vnd.github+json',
-  'X-GitHub-Api-Version': '2022-11-28',
-  'Content-Type': 'application/json',
-});
-
-/** Repo-safe slug + the project id prefix: `acme-plumbing-1a2b3c4d`. */
-export const backupRepoName = (nameHint: string, projectId: string) => {
-  const slug = nameHint
-    .toLowerCase()
-    .replace(/\.zip$/, '')
-    .replace(/[^a-z0-9-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 60);
-  return `${slug || 'site'}-${projectId.slice(0, 8)}`;
-};
 
 const readConfig = async (dir: string, key: string) => {
   try {
@@ -84,66 +66,15 @@ export const backupState = async (dir: string): Promise<BackupState | null> => {
   };
 };
 
-/**
- * The org repo for this clone, created on first use. The repo description is
- * the project id, so a retry after a crash between "created" and "saved to
- * config" adopts its own repo instead of making a duplicate.
- */
-export const ensureBackupRepo = async (
-  dir: string,
-  projectId: string,
-  nameHint: string,
-  deps: BackupDeps = {}
-): Promise<string> => {
-  const saved = await readConfig(dir, 'cp.backupRepo');
-  if (saved) return saved;
-
-  const api = deps.api ?? fetch;
-  const org = config.githubBackupOrg;
-  const base = backupRepoName(nameHint, projectId);
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const name = attempt ? `${base}-${attempt + 1}` : base;
-    const res = await api(`${API}/orgs/${org}/repos`, {
-      method: 'POST',
-      headers: ghHeaders(),
-      body: JSON.stringify({
-        name,
-        private: true,
-        description: projectId,
-        auto_init: false,
-        has_issues: false,
-        has_projects: false,
-        has_wiki: false,
-      }),
-    });
-    if (res.ok) {
-      await writeConfig(dir, 'cp.backupRepo', name);
-      return name;
-    }
-    if (res.status !== 422) {
-      throw new Error(`GitHub repo create failed (${res.status}): ${await res.text()}`);
-    }
-    // 422 = name taken. Ours (same project id) → adopt; anyone else's → next.
-    const existing = await api(`${API}/repos/${org}/${name}`, {
-      headers: ghHeaders(),
-    });
-    if (existing.ok) {
-      const body = (await existing.json()) as { description?: string | null };
-      if (body.description === projectId) {
-        await writeConfig(dir, 'cp.backupRepo', name);
-        return name;
-      }
-    }
-  }
-  throw new Error('Could not find a free repo name in the backup org.');
-};
-
-/** Push the clone's `main` to its org repo. Throws on failure. */
+/** Push the clone's `main` to the given org repo. Throws on failure. */
 export const backupProject = async (
   projectId: string,
-  nameHint: string,
+  repo: string,
   deps: BackupDeps = {}
 ): Promise<string> => {
+  if (!isBackupRepoName(repo)) {
+    throw new Error('Invalid backup repo name.');
+  }
   const dir = repoDir(projectId);
   if (!existsSync(join(dir, '.git'))) {
     throw new Error('Workspace missing.');
@@ -151,7 +82,7 @@ export const backupProject = async (
   if (await hasOrigin(dir)) {
     throw new Error('GitHub projects are not backed up.');
   }
-  const repo = await ensureBackupRepo(dir, projectId, nameHint, deps);
+  await writeConfig(dir, 'cp.backupRepo', repo);
   const sha = await git(dir, ['rev-parse', 'refs/heads/main']);
   const url = (deps.remoteFor ?? defaultRemote)(config.githubBackupOrg, repo);
   try {
@@ -180,14 +111,14 @@ const chains = new Map<string, Promise<void>>();
  */
 export const queueBackup = (
   projectId: string,
-  nameHint: string,
+  repo: string,
   deps: BackupDeps = {}
 ): Promise<void> => {
   if (!isBackupConfigured()) return Promise.resolve();
   const previous = chains.get(projectId) ?? Promise.resolve();
   const next = previous.then(async () => {
     try {
-      await backupProject(projectId, nameHint, deps);
+      await backupProject(projectId, repo, deps);
     } catch (error) {
       const message = sanitize(
         error instanceof Error ? error.message : 'backup failed'
@@ -205,29 +136,4 @@ export const queueBackup = (
     if (chains.get(projectId) === next) chains.delete(projectId);
   });
   return next;
-};
-
-/** Archive the org repo when the hub deletes the project. Best effort. */
-export const archiveBackupRepo = async (
-  dir: string,
-  deps: BackupDeps = {}
-): Promise<boolean> => {
-  if (!isBackupConfigured()) return false;
-  const repo = await readConfig(dir, 'cp.backupRepo');
-  if (!repo) return false;
-  try {
-    const res = await (deps.api ?? fetch)(
-      `${API}/repos/${config.githubBackupOrg}/${repo}`,
-      {
-        method: 'PATCH',
-        headers: ghHeaders(),
-        body: JSON.stringify({ archived: true }),
-        signal: AbortSignal.timeout(10_000),
-      }
-    );
-    return res.ok;
-  } catch (error) {
-    console.error(`[backup] archive ${repo} failed`, error);
-    return false;
-  }
 };

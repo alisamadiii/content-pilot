@@ -5,8 +5,8 @@ import { mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-// GitHub backup of uploaded projects. The REST API is faked and the push
-// target is a local bare repo, so this runs offline with real git.
+// GitHub backup of uploaded projects. The hub names the repo; pilot only
+// pushes. The push target is a local bare repo, so this runs offline with real git.
 const ws = mkdtempSync(join(tmpdir(), 'cp-backup-'));
 const remotes = mkdtempSync(join(tmpdir(), 'cp-backup-remotes-'));
 process.env.WORKSPACE_DIR = ws;
@@ -32,34 +32,9 @@ type Mod = typeof import('./backup');
 let b: Mod;
 let work: string;
 
-interface Call {
-  method: string;
-  url: string;
-  body?: Record<string, unknown>;
-}
-
-/** Fake GitHub: `taken` maps repo name → description of an existing repo. */
-const fakeApi = (taken: Record<string, string> = {}, calls: Call[] = []) =>
-  (async (url: string | URL, init?: RequestInit) => {
-    const method = init?.method ?? 'GET';
-    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    calls.push({ method, url: String(url), body });
-    if (method === 'POST') {
-      if (body.name in taken) return new Response('{}', { status: 422 });
-      taken[body.name] = body.description;
-      execFileSync('git', ['init', '-q', '--bare', join(remotes, `${body.name}.git`)]);
-      return new Response('{}', { status: 201 });
-    }
-    if (method === 'GET') {
-      const name = String(url).split('/').pop()!;
-      return name in taken
-        ? Response.json({ description: taken[name] })
-        : new Response('{}', { status: 404 });
-    }
-    return new Response('{}', { status: 200 });
-  }) as typeof fetch;
-
 const remoteFor = (_org: string, repo: string) => join(remotes, `${repo}.git`);
+const bareRepo = (repo: string) =>
+  execFileSync('git', ['init', '-q', '--bare', join(remotes, `${repo}.git`)]);
 
 before(async () => {
   b = await import('./backup');
@@ -71,22 +46,11 @@ before(async () => {
   sh(work, ['commit', '-qm', 'Import Acme Plumbing']);
 });
 
-test('backupRepoName slugs the name and suffixes the project id prefix', () => {
-  assert.equal(b.backupRepoName('Acme Plumbing.zip', P), 'acme-plumbing-44444444');
-  assert.equal(b.backupRepoName('!!!', P), 'site-44444444');
-});
-
-test('first backup creates a private org repo, pushes main, records state', async () => {
-  const calls: Call[] = [];
-  const sha = await b.backupProject(P, 'Acme Plumbing', { api: fakeApi({}, calls), remoteFor });
-  assert.equal(calls[0].method, 'POST');
-  assert.equal(calls[0].url, 'https://api.github.com/orgs/acme-backups/repos');
-  assert.equal(calls[0].body?.private, true);
-  assert.equal(calls[0].body?.description, P);
-  const bare = join(remotes, 'acme-plumbing-44444444.git');
-  assert.equal(sh(bare, ['rev-parse', 'main']), sha);
-  const state = await b.backupState(work);
-  assert.deepEqual(state, {
+test('pushes main to the repo the hub named and records state', async () => {
+  bareRepo('acme-plumbing-44444444');
+  const sha = await b.backupProject(P, 'acme-plumbing-44444444', { remoteFor });
+  assert.equal(sh(join(remotes, 'acme-plumbing-44444444.git'), ['rev-parse', 'main']), sha);
+  assert.deepEqual(await b.backupState(work), {
     repo: 'acme-plumbing-44444444',
     url: 'https://github.com/acme-backups/acme-plumbing-44444444',
     sha,
@@ -98,46 +62,36 @@ test('backup never adds an origin remote (upload mode must stay origin-less)', (
   assert.equal(sh(work, ['remote']), '');
 });
 
-test('later backups reuse the saved repo and fast-forward', async () => {
+test('later backups fast-forward the same repo', async () => {
   writeFileSync(join(work, 'index.html'), 'v2');
   sh(work, ['commit', '-qam', 'Publish']);
-  const calls: Call[] = [];
-  const sha = await b.backupProject(P, 'ignored', { api: fakeApi({}, calls), remoteFor });
-  assert.equal(calls.length, 0);
+  const sha = await b.backupProject(P, 'acme-plumbing-44444444', { remoteFor });
   assert.equal(sh(join(remotes, 'acme-plumbing-44444444.git'), ['rev-parse', 'main']), sha);
 });
 
-test('a taken name owned by someone else gets a suffix; our own is adopted', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'cp-backup-ensure-'));
-  execFileSync('git', ['init', '-q', dir]);
-  const taken = { 'acme-44444444': 'other-project' };
-  assert.equal(await b.ensureBackupRepo(dir, P, 'acme', { api: fakeApi(taken) }), 'acme-44444444-2');
+test('a re-link pushes to the new repo and records it as the target', async () => {
+  bareRepo('acme-relinked');
+  const sha = await b.backupProject(P, 'acme-relinked', { remoteFor });
+  assert.equal(sh(join(remotes, 'acme-relinked.git'), ['rev-parse', 'main']), sha);
+  assert.equal((await b.backupState(work))?.repo, 'acme-relinked');
+});
 
-  const dir2 = mkdtempSync(join(tmpdir(), 'cp-backup-adopt-'));
-  execFileSync('git', ['init', '-q', dir2]);
-  const ours = { 'acme-44444444': P };
-  const calls: Call[] = [];
-  assert.equal(await b.ensureBackupRepo(dir2, P, 'acme', { api: fakeApi(ours, calls) }), 'acme-44444444');
-  assert.equal(calls.filter((c) => c.method === 'POST').length, 1);
+test('rejects repo names that are not a plain name in the org', async () => {
+  for (const bad of ['', '.', '..', 'other-org/repo', 'a b', 'https://evil.test/x', 'x'.repeat(101)]) {
+    assert.equal(b.isBackupRepoName(bad), false, bad);
+    await assert.rejects(b.backupProject(P, bad, { remoteFor }), /Invalid backup repo name/);
+  }
+  assert.equal(b.isBackupRepoName('Acme_site.v2-1'), true);
 });
 
 test('queueBackup swallows failures, records a redacted error, clears it on success', async () => {
-  await b.queueBackup(P, 'x', {
-    api: fakeApi(),
+  await b.queueBackup(P, 'acme-relinked', {
     remoteFor: () => 'https://github_pat_SECRET123@127.0.0.1:1/none.git',
   });
   const failed = await b.backupState(work);
   assert.ok(failed?.error);
   assert.equal(failed!.error!.includes('SECRET123'), false);
 
-  await b.queueBackup(P, 'x', { api: fakeApi(), remoteFor });
+  await b.queueBackup(P, 'acme-relinked', { remoteFor });
   assert.equal((await b.backupState(work))?.error, null);
-});
-
-test('archiveBackupRepo PATCHes archived:true on the saved repo', async () => {
-  const calls: Call[] = [];
-  assert.equal(await b.archiveBackupRepo(work, { api: fakeApi({}, calls) }), true);
-  assert.equal(calls[0].method, 'PATCH');
-  assert.equal(calls[0].url, 'https://api.github.com/repos/acme-backups/acme-plumbing-44444444');
-  assert.deepEqual(calls[0].body, { archived: true });
 });
