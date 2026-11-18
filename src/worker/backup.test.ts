@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, test } from 'node:test';
 import { execFileSync } from 'child_process';
-import { mkdtempSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -94,4 +94,83 @@ test('queueBackup swallows failures, records a redacted error, clears it on succ
 
   await b.queueBackup(P, 'acme-relinked', { remoteFor });
   assert.equal((await b.backupState(work))?.error, null);
+});
+
+// 2026-11-18: hub "GitHub" dialog pulls the backup repo's latest commit into
+// the workspace. main must become that exact commit (no commit on top), with
+// preview branches gone, no origin remote and cp.backupSha recorded.
+test('fetchBackup reads the remote head without touching main', async () => {
+  const bare = join(remotes, 'acme-relinked.git');
+  const clone = mkdtempSync(join(tmpdir(), 'cp-backup-clone-'));
+  execFileSync('git', ['clone', '-q', '-b', 'main', bare, clone]);
+  writeFileSync(join(clone, 'index.html'), 'v3 from github');
+  writeFileSync(join(clone, 'about.html'), 'new page');
+  sh(clone, ['add', '-A']);
+  sh(clone, ['commit', '-qm', 'Edit on GitHub']);
+  sh(clone, ['push', '-q', 'origin', 'HEAD:main']);
+  const remoteSha = sh(bare, ['rev-parse', 'main']);
+
+  const before = sh(work, ['rev-parse', 'main']);
+  const head = await b.fetchBackup(P, 'acme-relinked', { remoteFor });
+  assert.deepEqual(head, { sha: remoteSha, message: 'Edit on GitHub' });
+  assert.equal(sh(work, ['rev-parse', 'main']), before);
+  assert.equal(sh(work, ['rev-parse', 'refs/cp/backup']), remoteSha);
+  assert.equal(sh(work, ['remote']), '');
+});
+
+test('exportFetchedBackup copies the fetched tree into staging', async () => {
+  const zip = join(ws, 'pull.zip');
+  const staging = join(ws, 'pull-staging');
+  const { files } = await b.exportFetchedBackup(P, zip, staging);
+  assert.equal(files, 2);
+  assert.equal(readFileSync(join(staging, 'about.html'), 'utf8'), 'new page');
+  assert.equal(readFileSync(join(work, 'index.html'), 'utf8'), 'v2');
+});
+
+test('mirrorBackup makes main the fetched commit, drops preview branches, keeps ignored files', async () => {
+  sh(work, ['checkout', '-qb', 'preview/s9']);
+  writeFileSync(join(work, 'draft.html'), 'unpublished');
+  sh(work, ['add', '-A']);
+  sh(work, ['commit', '-qm', 'AI edit']);
+  mkdirSync(join(work, 'node_modules'), { recursive: true });
+  writeFileSync(join(work, 'node_modules', 'x.js'), '');
+  writeFileSync(join(work, '.gitignore'), 'node_modules\n');
+  writeFileSync(join(work, 'scratch.txt'), 'untracked');
+
+  const remoteSha = sh(join(remotes, 'acme-relinked.git'), ['rev-parse', 'main']);
+  const { sha } = await b.mirrorBackup(P, 'acme-relinked');
+  assert.equal(sha, remoteSha);
+  assert.equal(sh(work, ['rev-parse', 'HEAD']), remoteSha);
+  assert.equal(sh(work, ['symbolic-ref', 'HEAD']), 'refs/heads/main');
+  assert.equal(sh(work, ['log', '--format=%s', '-1']), 'Edit on GitHub');
+  assert.equal(sh(work, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/']), 'main');
+  assert.equal(readFileSync(join(work, 'index.html'), 'utf8'), 'v3 from github');
+  assert.equal(existsSync(join(work, 'draft.html')), false);
+  assert.equal(existsSync(join(work, 'scratch.txt')), false);
+  assert.equal(existsSync(join(work, '.gitignore')), false);
+  assert.equal(existsSync(join(work, 'node_modules', 'x.js')), true);
+  assert.throws(() => sh(work, ['rev-parse', '--verify', 'refs/cp/backup']));
+  assert.equal(sh(work, ['remote']), '');
+  assert.deepEqual(await b.backupState(work), {
+    repo: 'acme-relinked',
+    url: 'https://github.com/acme-backups/acme-relinked',
+    sha: remoteSha,
+    error: null,
+  });
+});
+
+test('dropFetchedBackup forgets the ref after a failed pull', async () => {
+  await b.fetchBackup(P, 'acme-relinked', { remoteFor });
+  await b.dropFetchedBackup(P);
+  assert.throws(() => sh(work, ['rev-parse', '--verify', 'refs/cp/backup']));
+});
+
+test('fetchBackup redacts the token on failure and refuses bad names', async () => {
+  await assert.rejects(
+    b.fetchBackup(P, 'acme-relinked', {
+      remoteFor: () => 'https://github_pat_SECRET123@127.0.0.1:1/none.git',
+    }),
+    (error: Error) => !error.message.includes('SECRET123')
+  );
+  await assert.rejects(b.fetchBackup(P, 'other/repo', { remoteFor }), /Invalid backup repo name/);
 });

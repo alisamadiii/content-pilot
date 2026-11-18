@@ -2,6 +2,8 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import { config } from './config';
 import { git, gitAuthArgs, hasOrigin, repoDir, sanitize } from './git';
+import { deletePreviewBranches } from './replace';
+import { extractZip } from './zip-extract';
 
 /**
  * GitHub backup for uploaded (no-GitHub) projects. Their workspace is the only
@@ -10,6 +12,10 @@ import { git, gitAuthArgs, hasOrigin, repoDir, sanitize } from './git';
  * which repo (it creates and links them); pilot only pushes. The workspace
  * stays the source of truth: the push goes to an explicit URL, never an
  * `origin` remote (hasOrigin/baseRef would flip the project into GitHub mode).
+ *
+ * The reverse direction (hub "GitHub" dialog, "Pull latest commit") fetches
+ * that repo's `main` and makes it the workspace `main` (fetchBackup +
+ * mirrorBackup): an admin or owner edits on GitHub, the workspace follows.
  *
  * State lives in the clone's own git config, no DB column:
  *  - cp.backupRepo   repo name in the org (last push target)
@@ -100,6 +106,93 @@ export const backupProject = async (
   await writeConfig(dir, 'cp.backupSha', sha);
   await clearConfig(dir, 'cp.backupError');
   return sha;
+};
+
+const BACKUP_REF = 'refs/cp/backup';
+
+export interface PullResult {
+  sha: string;
+  message: string;
+}
+
+/**
+ * Fetch the backup repo's `main` into refs/cp/backup (hub "GitHub" dialog,
+ * pull). Reads only; the workspace tree is untouched until mirrorBackup.
+ * Same explicit-URL rule as the push: no origin remote is ever added.
+ */
+export const fetchBackup = async (
+  projectId: string,
+  repo: string,
+  deps: BackupDeps = {}
+): Promise<PullResult> => {
+  if (!isBackupRepoName(repo)) {
+    throw new Error('Invalid backup repo name.');
+  }
+  const dir = repoDir(projectId);
+  if (!existsSync(join(dir, '.git'))) {
+    throw new Error('Workspace missing.');
+  }
+  if (await hasOrigin(dir)) {
+    throw new Error('GitHub projects are not backed up.');
+  }
+  const url = (deps.remoteFor ?? defaultRemote)(config.githubBackupOrg, repo);
+  try {
+    await git(dir, [
+      ...gitAuthArgs(config.githubBackupToken),
+      'fetch',
+      '--quiet',
+      url,
+      `+refs/heads/main:${BACKUP_REF}`,
+    ]);
+  } catch (error) {
+    throw new Error(sanitize(error instanceof Error ? error.message : 'fetch failed'));
+  }
+  return {
+    sha: await git(dir, ['rev-parse', BACKUP_REF]),
+    message: await git(dir, ['log', '-1', '--format=%s', BACKUP_REF]),
+  };
+};
+
+/**
+ * Copy the fetched commit's tree into `staging` (via `git archive` + the
+ * import zip extractor, same limits) so it can be framework-checked without
+ * touching the live tree.
+ */
+export const exportFetchedBackup = async (
+  projectId: string,
+  zipPath: string,
+  staging: string
+): Promise<{ files: number }> => {
+  await git(repoDir(projectId), ['archive', '--format=zip', '-o', zipPath, BACKUP_REF]);
+  return extractZip(zipPath, staging);
+};
+
+/** Forget a fetched ref (after a failed pull). */
+export const dropFetchedBackup = (projectId: string) =>
+  git(repoDir(projectId), ['update-ref', '-d', BACKUP_REF]).catch(() => '');
+
+/**
+ * Make `main` the fetched backup commit: hard reset, drop the preview
+ * branches (cut from the old source), clean untracked files (ignored
+ * node_modules/dist stay, like syncLocalRepo) and record the sha as backed
+ * up, since the two now match. Sessions must be closed and the replace lock
+ * held by the caller.
+ */
+export const mirrorBackup = async (
+  projectId: string,
+  repo: string
+): Promise<{ sha: string }> => {
+  const dir = repoDir(projectId);
+  const sha = await git(dir, ['rev-parse', BACKUP_REF]);
+  await git(dir, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  await git(dir, ['reset', '--hard', BACKUP_REF]);
+  await git(dir, ['clean', '-fd']);
+  await deletePreviewBranches(dir);
+  await git(dir, ['update-ref', '-d', BACKUP_REF]);
+  await writeConfig(dir, 'cp.backupRepo', repo);
+  await writeConfig(dir, 'cp.backupSha', sha);
+  await clearConfig(dir, 'cp.backupError');
+  return { sha };
 };
 
 // One push at a time per project; later requests chain behind the running one.

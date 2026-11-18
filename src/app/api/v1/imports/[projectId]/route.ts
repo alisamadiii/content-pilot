@@ -1,4 +1,4 @@
-import { and, eq, inArray, notInArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { existsSync } from 'fs';
 import { mkdir, readdir, rm } from 'fs/promises';
 import { join, resolve, sep } from 'path';
@@ -16,6 +16,7 @@ import {
   declaredTooLarge,
   receiveZip,
 } from '@/lib/import-upload';
+import { closeProjectSessions } from '@/lib/close-project-sessions';
 import { verifyImportToken } from '@/lib/import-token';
 import { extractCredentials, sessionCorsHeaders } from '@/lib/request-credentials';
 import { removeProjectSettings } from '@/lib/settings';
@@ -153,11 +154,6 @@ export const OPTIONS = async (request: Request) =>
     headers: sessionCorsHeaders(request.headers.get('origin')),
   });
 
-// Sessions still booting own the clone (npm install, checkout); replacing the
-// tree under them would race. Ready/paused ones are stopped instead.
-const BOOTING = new Set<string>(['starting', 'installing', 'restarting']);
-const TERMINAL = ['failed', 'closed', 'published', 'expired'] as const;
-
 export const POST = async (
   request: Request,
   { params }: { params: Promise<{ projectId: string }> }
@@ -231,53 +227,12 @@ export const POST = async (
       );
     }
 
-    const sessions = await db
-      .select({ id: previewSession.id, pid: previewSession.pid, status: previewSession.status })
-      .from(previewSession)
-      .where(
-        and(
-          eq(previewSession.projectId, projectId),
-          notInArray(previewSession.status, [...TERMINAL])
-        )
-      );
-    if (sessions.some((s) => BOOTING.has(s.status))) {
+    const closed = await closeProjectSessions(projectId, 'Replaced by a new import.');
+    if (closed.booting) {
       return Response.json(
         { error: 'The editor is starting up for this project. Try again in a minute.' },
         { status: 409, headers }
       );
-    }
-    // Stop the rest (ready or paused): their branches are cut from the old
-    // source and get deleted with it. The supervisor tears down its side on
-    // the next tick; killing the pid here frees the tree right away.
-    for (const session of sessions) {
-      if (session.pid) {
-        try {
-          process.kill(session.pid, 'SIGTERM');
-        } catch {
-          // Already gone.
-        }
-      }
-      await removeSessionUploads(session.id);
-    }
-    if (sessions.length) {
-      const ids = sessions.map((s) => s.id);
-      await db
-        .update(previewSession)
-        .set({
-          status: 'closed',
-          error: 'Replaced by a new import.',
-          closedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(inArray(previewSession.id, ids));
-      await db
-        .delete(previewAttachment)
-        .where(inArray(previewAttachment.sessionId, ids));
-      try {
-        await client.notify('cp_preview', '');
-      } catch {
-        // The supervisor also polls.
-      }
     }
 
     const { sha } = await replaceWorkspace({

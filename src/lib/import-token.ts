@@ -10,7 +10,7 @@ import { isProjectId } from './project-id';
  * requires it. The token authorizes exactly one zip upload for one project —
  * the import route 409s once the workspace dir exists.
  *
- * `scope: 'replace'` authorizes one source replace (PUT /api/v1/imports/:id)
+ * `scope: 'replace'` authorizes one source replace (POST /api/v1/imports/:id)
  * on an existing upload project. Callers name the scope they accept, so an
  * import token can't replace and a replace token can't create.
  */

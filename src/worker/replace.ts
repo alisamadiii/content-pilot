@@ -44,6 +44,20 @@ export const acquireReplaceLock = async (
   return () => rm(path, { force: true });
 };
 
+/** Drop every local branch but `main` (preview session branches). */
+export const deletePreviewBranches = async (dir: string) => {
+  const branches = await git(dir, [
+    'for-each-ref',
+    '--format=%(refname:short)',
+    'refs/heads/',
+  ]);
+  for (const branch of branches.split('\n').map((b) => b.trim())) {
+    if (branch && branch !== 'main') {
+      await git(dir, ['branch', '-D', branch]);
+    }
+  }
+};
+
 export interface ReplaceParams {
   projectId: string;
   /** Extracted, wrapper-stripped, framework-checked new source. */
@@ -93,16 +107,7 @@ export const replaceWorkspace = async ({
   ]);
 
   // Session branches were cut from the old source; they're meaningless now.
-  const branches = await git(staging, [
-    'for-each-ref',
-    '--format=%(refname:short)',
-    'refs/heads/',
-  ]);
-  for (const branch of branches.split('\n').map((b) => b.trim())) {
-    if (branch && branch !== 'main') {
-      await git(staging, ['branch', '-D', branch]);
-    }
-  }
+  await deletePreviewBranches(staging);
   const sha = await git(staging, ['rev-parse', 'HEAD']);
 
   // Two renames on one volume. Between them the dir is briefly absent; the
