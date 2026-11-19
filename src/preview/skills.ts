@@ -13,8 +13,28 @@ import { join, relative } from 'path';
  */
 const SKILL_DIRS = ['.claude', '.gemini', '.agents'];
 export type SkillInvocation = { name: string; rest: string };
-/** `dir` is the skill folder, repo-root-relative (e.g. `.claude/skills/add-page`). */
-export type LoadedSkill = { name: string; body: string; dir: string };
+/**
+ * `dir` is the skill folder, repo-root-relative (e.g. `.claude/skills/add-page`).
+ * `uploads` is the optional `uploads:` frontmatter line: the repo folder the
+ * skill's images belong in (e.g. `src/assets/promotions`), see ./attachments.
+ */
+export type LoadedSkill = { name: string; body: string; dir: string; uploads?: string };
+
+/**
+ * `uploads: <folder>` from a SKILL.md frontmatter, made safe: repo-relative,
+ * forward slashes, no `..`, no dot-folders (`.git`, `.claude`), not
+ * node_modules. Anything else is ignored (the normal placement applies).
+ */
+export const parseUploadsDir = (raw: string): string | undefined => {
+  const front = raw.match(/^---\n([\s\S]*?)\n---/);
+  const line = front?.[1].split('\n').find((l) => /^uploads:/.test(l));
+  if (!line) return undefined;
+  const value = line.replace(/^uploads:\s*/, '').trim().replace(/^["']|["']$/g, '').replace(/^\.\//, '').replace(/\/+$/, '');
+  if (!value || value.startsWith('/') || value.includes('\\') || !/^[A-Za-z0-9_\-./]+$/.test(value)) return undefined;
+  const parts = value.split('/');
+  if (parts.some((part) => !part || part === '..' || part.startsWith('.') || part === 'node_modules')) return undefined;
+  return value;
+};
 
 const INVOCATION = /^\/([a-z0-9][a-z0-9_-]*)(?:\s+([\s\S]*))?$/i;
 
@@ -35,10 +55,12 @@ export const loadSkill = async (
     try {
       const raw = await readFile(join(folder, 'SKILL.md'), 'utf8');
       const body = raw.replace(/^---\n[\s\S]*?\n---\n?/, '').trim();
+      const uploads = parseUploadsDir(raw);
       return {
         name,
         body,
         dir: relative(dir, folder).split('\\').join('/'),
+        ...(uploads ? { uploads } : {}),
       };
     } catch {
       // try the next location

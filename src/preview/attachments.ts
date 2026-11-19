@@ -55,16 +55,22 @@ export const planPlacements = async (params: {
   dir: string;
   publicRel: string;
   attachments: AttachmentRow[];
+  /**
+   * The invoked skill's `uploads:` folder (repo-relative, already validated in
+   * ./skills). Wins over the folder guess, so a site that resolves images by
+   * file name from `src/assets/...` gets them there (no import needed).
+   */
+  folder?: string;
 }): Promise<Placed[]> => {
-  const { dir, publicRel, attachments } = params;
-  const hints = await listImageDirHints(dir, publicRel);
+  const { dir, publicRel, attachments, folder: skillFolder } = params;
+  const hints = skillFolder ? [] : await listImageDirHints(dir, publicRel);
   const placed: Placed[] = [];
   const taken = new Set<string>();
   for (const row of attachments) {
     const ext = EXT_BY_MIME[row.mime as AttachmentMime];
     let dest = row.placedPath;
     if (!dest) {
-      const folder = chooseImageDir(row.description ?? '', hints, publicRel);
+      const folder = skillFolder ?? chooseImageDir(row.description ?? '', hints, publicRel);
       const stem = slugify(
         row.description || row.originalName.replace(/\.[^.]+$/, '')
       );
@@ -85,10 +91,14 @@ export const planPlacements = async (params: {
     }
     // Empty publicRel (static root repos): dest is already root-relative — the
     // old slice would eat its first character.
+    // Under the public folder an image is referenced by URL; elsewhere (a
+    // skill folder like src/assets/promotions) by its file name.
+    const inPublic = !publicRel || dest.startsWith(`${publicRel}/`);
     placed.push({
       row,
       dest,
-      url: '/' + (publicRel ? dest.slice(publicRel.length + 1) : dest),
+      url: '/' + (publicRel && inPublic ? dest.slice(publicRel.length + 1) : dest),
+      ...(inPublic ? {} : { name: posix.basename(dest) }),
     });
   }
   return placed;

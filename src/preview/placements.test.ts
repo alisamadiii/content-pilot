@@ -115,3 +115,22 @@ test('verifyPlacements ignores image files, oversized files and missing files in
 test('verifyPlacements with nothing placed is always fine', async () => {
   assert.equal(await verifyPlacements({ dir: '/nonexistent', placed: [], changed: ['x'] }), null);
 });
+
+test('attachments block: skill-folder images are referenced by file name, not URL', () => {
+  const block = buildAttachmentsBlock([
+    { row: row(), dest: 'src/assets/promotions/black-friday.webp', url: '/src/assets/promotions/black-friday.webp', name: 'black-friday.webp' },
+  ]);
+  assert.match(block, /1\. file name `black-friday\.webp` \(saved as `src\/assets\/promotions\/black-friday\.webp`; webp, 800 x 600\)/);
+  assert.match(block, /exact file name \(for example "black-friday\.webp"\)/);
+  assert.doesNotMatch(block, /<img src=/);
+});
+
+test('verifyPlacements checks a skill-folder image by its file name', async () => {
+  const dir = await repo({ 'src/data/promotion.json': '{"image":"black-friday.webp"}', 'src/data/other.json': '{}' });
+  const img = { row: row(), dest: 'src/assets/promotions/black-friday.webp', url: '/src/assets/promotions/black-friday.webp', name: 'black-friday.webp' };
+  assert.equal(await verifyPlacements({ dir, placed: [img], changed: ['src/data/promotion.json'] }), null);
+  assert.match(
+    (await verifyPlacements({ dir, placed: [img], changed: ['src/data/other.json'] })) ?? '',
+    /Put its file name "black-friday\.webp" in the field the skill describes/
+  );
+});

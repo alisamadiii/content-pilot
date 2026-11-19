@@ -338,12 +338,12 @@ const processMessage = async (row: MessageRow) => {
         await recentUserContents(row.sessionId, row.id, 4)
       );
     }
-    if (invocation && provider === 'gemini') {
-      const skill = await loadSkill(session.dir, invocation.name);
-      if (skill) {
-        skillBlock = buildSkillBlock(skill, invocation.rest);
-        request = invocation.rest || bareSkillRequest(skill.name);
-      }
+    // Loaded for both providers: the skill's `uploads:` folder decides where
+    // attached images go. Only Gemini gets the body inlined.
+    const skill = invocation ? await loadSkill(session.dir, invocation.name) : null;
+    if (skill && provider === 'gemini') {
+      skillBlock = buildSkillBlock(skill, invocation!.rest);
+      request = invocation!.rest || bareSkillRequest(skill.name);
     }
     const attachments = await loadMessageAttachments(row.id);
     // The hub-supplied page/element context steers the AI straight to the file
@@ -380,6 +380,7 @@ const processMessage = async (row: MessageRow) => {
           dir: session.dir,
           publicRel: repo.publicRel,
           attachments,
+          folder: skill?.uploads,
         })
       : [];
     const attachBlock = placed.length ? buildAttachmentsBlock(placed) : '';

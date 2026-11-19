@@ -8,6 +8,7 @@ import {
   buildSkillBlock,
   loadSkill,
   parseSkillInvocation,
+  parseUploadsDir,
   scrubSkillJargon,
 } from './skills';
 
@@ -169,4 +170,30 @@ test('carrySkillFromPrevious: an explicit new /skill, a plain previous message, 
   assert.equal(carrySkillFromPrevious('change the heading', 'and the subheading'), null);
   assert.equal(carrySkillFromPrevious(null, 'hello'), null);
   assert.equal(carrySkillFromPrevious('/manage-team', '   '), null);
+});
+
+test('parseUploadsDir reads a safe repo-relative uploads folder from the frontmatter', () => {
+  const fm = (line: string) => `---\nname: x\ndescription: y\n${line}\n---\nBody`;
+  assert.equal(parseUploadsDir(fm('uploads: src/assets/promotions')), 'src/assets/promotions');
+  assert.equal(parseUploadsDir(fm('uploads: "./src/assets/work/"')), 'src/assets/work');
+  assert.equal(parseUploadsDir(fm('uploads: public/images/team')), 'public/images/team');
+  assert.equal(parseUploadsDir('---\nname: x\n---\nuploads: src/assets'), undefined); // body, not frontmatter
+  for (const bad of ['/etc', '../outside', 'src/../..', '.git/hooks', 'node_modules/x', 'src\\assets', 'src/a b', '']) {
+    assert.equal(parseUploadsDir(fm(`uploads: ${bad}`)), undefined, bad);
+  }
+});
+
+test('loadSkill exposes the uploads folder only when the frontmatter sets one', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cp-skill-up-'));
+  await mkdir(join(dir, '.claude/skills/manage-promotion'), { recursive: true });
+  await writeFile(
+    join(dir, '.claude/skills/manage-promotion/SKILL.md'),
+    '---\nname: manage-promotion\ndescription: Promo\nuploads: src/assets/promotions\n---\nDo X.'
+  );
+  assert.deepEqual(await loadSkill(dir, 'manage-promotion'), {
+    name: 'manage-promotion',
+    body: 'Do X.',
+    dir: '.claude/skills/manage-promotion',
+    uploads: 'src/assets/promotions',
+  });
 });
