@@ -1,15 +1,22 @@
 import { eq, inArray } from 'drizzle-orm';
 import { db } from '@/db';
 import { appSetting } from '@/db/schema';
+import { decryptSecret, encryptSecret, hasSecretKey } from './secret-box';
 import {
   clampMaxSessions,
   MAX_SESSIONS_KEY,
   normalizeProvider,
+  projectEnvKey,
   providerKey,
   type AiProvider,
 } from './settings-rules';
 
-export { MAX_SESSIONS_KEY, providerKey, type AiProvider } from './settings-rules';
+export {
+  MAX_SESSIONS_KEY,
+  projectEnvKey,
+  providerKey,
+  type AiProvider,
+} from './settings-rules';
 
 /** Read a raw setting value, or null when unset. */
 export const getSetting = async (key: string): Promise<string | null> => {
@@ -48,15 +55,74 @@ export const getMaxSessions = async (): Promise<number> =>
   clampMaxSessions(await getSetting(MAX_SESSIONS_KEY));
 
 /**
+ * A project's preview env values, decrypted. No row, no ENV_ENCRYPTION_KEY, or
+ * a blob that won't decrypt (key rotated, tampered) all read as {} — the
+ * preview boots without them rather than failing. Values are never logged.
+ */
+export const getProjectEnv = async (
+  projectId: string
+): Promise<Record<string, string>> => {
+  const blob = await getSetting(projectEnvKey(projectId));
+  if (!blob) return {};
+  if (!hasSecretKey()) {
+    console.warn(
+      `[settings] project ${projectId}: env values stored but ENV_ENCRYPTION_KEY is unset — ignoring them`
+    );
+    return {};
+  }
+  try {
+    const parsed: unknown = JSON.parse(decryptSecret(blob));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string'
+      )
+    );
+  } catch {
+    console.warn(
+      `[settings] project ${projectId}: env values could not be decrypted — ignoring them`
+    );
+    return {};
+  }
+};
+
+/**
+ * Applies `values` on top of the stored ones (an empty string removes that
+ * key) and saves the result encrypted; an empty result deletes the row.
+ * Throws when ENV_ENCRYPTION_KEY is missing or invalid (nothing is written).
+ */
+export const setProjectEnv = async (
+  projectId: string,
+  values: Record<string, string>
+): Promise<void> => {
+  // Fail on a missing/bad key before reading, so nothing is half-applied.
+  encryptSecret('');
+  const next = await getProjectEnv(projectId);
+  for (const [key, value] of Object.entries(values)) {
+    if (value === '') delete next[key];
+    else next[key] = value;
+  }
+  if (Object.keys(next).length === 0) {
+    await db.delete(appSetting).where(eq(appSetting.key, projectEnvKey(projectId)));
+    return;
+  }
+  await setSetting(projectEnvKey(projectId), encryptSecret(JSON.stringify(next)));
+};
+
+/**
  * Removes a project's settings overrides (project delete). The legacy
  * `gemini_tier:` row (free/paid key tier, removed 2026-11-07) is swept too so
- * old projects leave nothing behind.
+ * old projects leave nothing behind. Includes the project's env values.
  */
 export const removeProjectSettings = async (projectId: string): Promise<void> => {
   await db
     .delete(appSetting)
     .where(
-      inArray(appSetting.key, [providerKey(projectId), `gemini_tier:${projectId}`])
+      inArray(appSetting.key, [
+        providerKey(projectId),
+        projectEnvKey(projectId),
+        `gemini_tier:${projectId}`,
+      ])
     );
 };
 

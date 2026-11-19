@@ -181,6 +181,9 @@ export const previewSession = pgTable(
     // Set by the "pause" action; the supervisor aborts the in-flight AI run,
     // then nulls this.
     cancelRequestedAt: timestamp('cancel_requested_at'),
+    // Set by the "restart" action (with cancel + reset) and by an env-values
+    // save; the supervisor respawns the dev server (fresh env), then nulls this.
+    devRestartRequestedAt: timestamp('dev_restart_requested_at'),
     closedAt: timestamp('closed_at'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
@@ -280,6 +283,9 @@ export const PREVIEW_EVENT_TYPE_VALUES = [
   // Discard: the preview branch was reset to production; context + transcript
   // cleared. The client refetches the (now empty) transcript.
   'reset',
+  // The dev server was respawned (restart action or new env values); the
+  // client reloads the preview frame.
+  'restarted',
 ] as const;
 export type PreviewEventType = (typeof PREVIEW_EVENT_TYPE_VALUES)[number];
 

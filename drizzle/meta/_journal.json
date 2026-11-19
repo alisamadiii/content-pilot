@@ -57,6 +57,13 @@
       "when": 1794578597867,
       "tag": "0007_stormy_gambit",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795120428834,
+      "tag": "0008_lethal_clea",
+      "breakpoints": true
     }
   ]
 }

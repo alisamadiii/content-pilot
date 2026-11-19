@@ -25,6 +25,9 @@ const actionSchema = z.discriminatedUnion('action', [
   }),
   // Discard: reset the preview branch to production main, keep the session live.
   z.object({ action: z.literal('reset') }),
+  // Restart: abort the AI run, discard changes + chat (as reset), and respawn
+  // the dev server.
+  z.object({ action: z.literal('restart') }),
   // Pause: abort the in-flight AI run, keep the session live.
   z.object({ action: z.literal('cancel') }),
   // Publish: squash the session branch into the default branch as one commit
@@ -239,6 +242,28 @@ export const POST = async (
       // supervisor also polls
     }
     return Response.json({ id, reset: true }, { status: 200, headers });
+  }
+
+  if (parsed.data.action === 'restart') {
+    // Cancel + reset + dev-server respawn; the supervisor runs them in that
+    // order (the respawn waits for the reset to finish).
+    const now = new Date();
+    await db
+      .update(previewSession)
+      .set({
+        cancelRequestedAt: now,
+        resetRequestedAt: now,
+        devRestartRequestedAt: now,
+        lastActivityAt: now,
+        updatedAt: now,
+      })
+      .where(eq(previewSession.id, id));
+    try {
+      await client.notify('cp_preview', '');
+    } catch {
+      // supervisor also polls
+    }
+    return Response.json({ id, restart: true }, { status: 200, headers });
   }
 
   if (parsed.data.action === 'cancel') {

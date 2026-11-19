@@ -42,7 +42,7 @@ ghcr.io/<owner>/content-pilot:latest
 ```
 
 1. Create a Postgres resource and a new service from the image above.
-2. Set env vars: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` (public URL), `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY` (base64 PEM), `EDIT_TOKEN_SECRET` (shared with the hub), `GITHUB_BACKUP_ORG` + `GITHUB_BACKUP_TOKEN` (uploaded-project backups, see `.env.example`), and the provider keys.
+2. Set env vars: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` (public URL), `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY` (base64 PEM), `EDIT_TOKEN_SECRET` (shared with the hub), `GITHUB_BACKUP_ORG` + `GITHUB_BACKUP_TOKEN` (uploaded-project backups, see `.env.example`), `ENV_ENCRYPTION_KEY` (encrypts project preview env values), and the provider keys.
 3. Attach two persistent volumes:
    - `/data/workspace` — repo clones, plus the Gemini CLI home (`.gemini-home`), per-session Gemini system prompts (`.cp-prompts`) and staged uploads (`.uploads`)
    - `/home/nextjs/.claude` — provider auth

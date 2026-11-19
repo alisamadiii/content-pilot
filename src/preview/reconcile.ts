@@ -14,6 +14,7 @@ import {
   liveSession,
   pauseSession,
   resetSession,
+  restartDevServer,
   startSession,
   teardownSession,
 } from './sessions';
@@ -26,6 +27,9 @@ const starting = new Set<string>();
 
 // Guards against re-running a discard/reset across ticks while it's in flight.
 const resetting = new Set<string>();
+
+// Guards against respawning a dev server twice while a restart is in flight.
+const restarting = new Set<string>();
 
 const launch = (row: typeof previewSession.$inferSelect) => {
   if (starting.has(row.id) || liveSession(row.id)) return;
@@ -115,6 +119,24 @@ export const reconcileTick = async () => {
     ) {
       resetting.add(row.id);
       void resetSession(row).finally(() => resetting.delete(row.id));
+    }
+  }
+
+  // Dev-server restarts (restart action, saved env values). Only a ready, idle
+  // session; a pending or running reset goes first (the restart action asks
+  // for both) — devRestartRequestedAt persists until then.
+  for (const row of rows) {
+    if (
+      row.devRestartRequestedAt &&
+      row.status === 'ready' &&
+      liveSession(row.id) &&
+      !sessionBusy(row.id) &&
+      !row.resetRequestedAt &&
+      !resetting.has(row.id) &&
+      !restarting.has(row.id)
+    ) {
+      restarting.add(row.id);
+      void restartDevServer(row).finally(() => restarting.delete(row.id));
     }
   }
 

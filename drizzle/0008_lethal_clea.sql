@@ -1,0 +1,1 @@
+ALTER TABLE "preview_session" ADD COLUMN "dev_restart_requested_at" timestamp;

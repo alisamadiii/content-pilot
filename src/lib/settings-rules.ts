@@ -6,6 +6,12 @@ import { previewConfig } from '@/preview/config';
 /** Per-project AI provider override key (`ai_provider:<projectId>`). */
 export const providerKey = (projectId: string) => `ai_provider:${projectId}`;
 
+/**
+ * Per-project preview env values (`project_env:<projectId>`): one row holding
+ * the AES-GCM blob of a JSON `{ KEY: value }` object (see secret-box.ts).
+ */
+export const projectEnvKey = (projectId: string) => `project_env:${projectId}`;
+
 export const MAX_SESSIONS_KEY = 'max_preview_sessions';
 export const MAX_SESSIONS_CEILING = 20;
 

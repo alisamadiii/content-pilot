@@ -11,6 +11,7 @@ import {
   previewSession,
   type PreviewSessionStatus,
 } from '@/db/schema';
+import { getProjectEnv } from '@/lib/settings';
 import { removeSessionUploads } from '@/lib/uploads';
 import { removeGeminiSystemPrompt } from './gemini-system-prompt';
 import {
@@ -24,6 +25,7 @@ import { injectAnalyzer } from './analyzer';
 import { installDeps } from './install';
 import { previewConfig } from './config';
 import { type BootPlan, checkFramework } from './framework';
+import { projectDevEnv, readEnvExample } from './env-example';
 import { emitEvent } from './events';
 import { registerRoute, unregisterRoute } from './proxy';
 import {
@@ -32,6 +34,7 @@ import {
   devCommand,
   publicEndpoint,
   salientError,
+  USER_CODE_ENV_KEYS,
   userCodeEnv,
 } from './session-boot';
 
@@ -50,6 +53,8 @@ type LiveSession = {
   /** How to boot the tagged dev server (framework + wrapper config). */
   boot: BootPlan;
   port: number;
+  /** The project's env values for this dev server (see loadProjectEnv). */
+  projectEnv: Record<string, string>;
   child: ChildProcess;
   restarts: number;
   lastSpawnAt: number;
@@ -105,7 +110,30 @@ const allocatePort = async () => {
 // Install + dev server
 // ---------------------------------------------------------------------------
 
-const spawnDevServer = (dir: string, port: number, boot: BootPlan) => {
+/**
+ * The owner's stored env values the dev server gets: only keys the clone's
+ * `.env.example` lists, never one of the base process keys. Re-read on every
+ * (re)start so a saved value or an edited `.env.example` applies. Passed via
+ * the process env only — writing a `.env` into the clone would get committed
+ * by `add -A` and trip the `.env*` guardrails.
+ */
+const loadProjectEnv = async (projectId: string | null, dir: string) => {
+  if (!projectId) return {};
+  const keys = readEnvExample(dir).map((entry) => entry.key);
+  if (!keys.length) return {};
+  return projectDevEnv(keys, await getProjectEnv(projectId), [
+    ...USER_CODE_ENV_KEYS,
+    'PORT',
+    'HOST',
+  ]);
+};
+
+const spawnDevServer = (
+  dir: string,
+  port: number,
+  boot: BootPlan,
+  projectEnv: Record<string, string>
+) => {
   const { cmd, args, env: bootEnv } = devCommand(dir, port, boot);
   // Public scheme/port for the HMR websocket (read by the injected wrapper
   // config) — the browser must dial the proxy's public endpoint, never the
@@ -114,6 +142,8 @@ const spawnDevServer = (dir: string, port: number, boot: BootPlan) => {
   return spawn(cmd, args, {
     cwd: dir,
     env: userCodeEnv({
+      // Spread first: every pilot-set key below wins over a project value.
+      ...projectEnv,
       // The container sets NODE_ENV=production for the Next app; a dev server
       // must run in development (astro/vite dev, HMR, and dev-only deps expect
       // it). Also stops plugins from taking prod-only branches during preview.
@@ -181,7 +211,12 @@ const attachCrashHandler = (session: LiveSession) => {
       session.restarts += 1;
       await setStatus(session.id, 'restarting');
       try {
-        session.child = spawnDevServer(session.dir, session.port, session.boot);
+        session.child = spawnDevServer(
+          session.dir,
+          session.port,
+          session.boot,
+          session.projectEnv
+        );
         session.lastSpawnAt = Date.now();
         attachCrashHandler(session);
         await waitForReady(session.port, session.child);
@@ -246,8 +281,16 @@ export const startSession = async (row: SessionRow) => {
       `session ${row.id}: analyzer injected (${boot.framework}: ${boot.configPath})`
     );
 
+    // A fresh boot reads the current env values, so a pending restart request
+    // (env saved while paused or still installing) is already satisfied.
+    await db
+      .update(previewSession)
+      .set({ devRestartRequestedAt: null })
+      .where(eq(previewSession.id, row.id));
+    const projectEnv = await loadProjectEnv(row.projectId, dir);
+
     const port = await allocatePort();
-    const child = spawnDevServer(dir, port, boot);
+    const child = spawnDevServer(dir, port, boot, projectEnv);
     bootOutput = captureOutput(child);
     const session: LiveSession = {
       id: row.id,
@@ -255,6 +298,7 @@ export const startSession = async (row: SessionRow) => {
       dir,
       boot,
       port,
+      projectEnv,
       child,
       restarts: 0,
       lastSpawnAt: Date.now(),
@@ -351,6 +395,85 @@ export const resetSession = async (row: SessionRow) => {
     .where(eq(previewSession.id, row.id));
   await emitEvent(row.id, 'reset', {});
   log(`session ${row.id}: reset complete`);
+};
+
+/** SIGTERM, SIGKILL after 5s; resolves once the process has exited. */
+const stopChild = (child: ChildProcess) =>
+  new Promise<void>((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // already gone
+      }
+    }, 5_000);
+    timer.unref();
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    child.kill('SIGTERM');
+  });
+
+/**
+ * "Restart" (and saved env values): respawns the dev server on the same port
+ * with a fresh env, so new project env values apply. Files and chat are left
+ * alone. Called from reconcile only when the session is ready, idle and not
+ * mid-reset.
+ */
+export const restartDevServer = async (row: SessionRow) => {
+  const session = live.get(row.id);
+  if (!session) return;
+  log(`session ${row.id}: restarting dev server`);
+  // Cleared up front: a request that lands mid-restart sets it again and is
+  // picked up next tick.
+  await db
+    .update(previewSession)
+    .set({ devRestartRequestedAt: null, updatedAt: new Date() })
+    .where(eq(previewSession.id, row.id));
+  await setStatus(row.id, 'restarting');
+  // closing = the old child's exit handler must not read this as a crash.
+  session.closing = true;
+  await stopChild(session.child);
+  // Torn down (closed/paused) while the old server was stopping: nothing to do.
+  if (live.get(row.id) !== session) return;
+  let output: () => string = () => '';
+  try {
+    session.projectEnv = await loadProjectEnv(session.projectId, session.dir);
+    session.child = spawnDevServer(
+      session.dir,
+      session.port,
+      session.boot,
+      session.projectEnv
+    );
+    output = captureOutput(session.child);
+    session.closing = false;
+    session.restarts = 0;
+    session.lastSpawnAt = Date.now();
+    attachCrashHandler(session);
+    await waitForReady(session.port, session.child);
+    await setStatus(row.id, 'ready', { pid: session.child.pid ?? null });
+    await emitEvent(row.id, 'restarted', {});
+    log(`session ${row.id}: dev server restarted on :${session.port}`);
+  } catch (error) {
+    const tail = sanitize(output());
+    log(
+      `session ${row.id}: restart failed — ${sanitize((error as Error).message)}${
+        tail ? `\n--- dev server output ---\n${tail}` : ''
+      }`
+    );
+    await teardownSession(
+      row.id,
+      'failed',
+      `The preview could not restart: ${
+        tail ? salientError(tail) : sanitize((error as Error).message).slice(0, 300)
+      }`
+    );
+  }
 };
 
 export const teardownSession = async (

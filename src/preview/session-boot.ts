@@ -120,7 +120,7 @@ export const hasDevScript = (dir: string) => {
 // Allow-list, never a deny-list: the pilot's own env carries DATABASE_URL, the
 // GitHub App private key, auth secrets and AI keys, and any postinstall script
 // or config file in a client repo could read whatever we hand it.
-const USER_CODE_ENV_KEYS = [
+export const USER_CODE_ENV_KEYS = [
   'PATH',
   'HOME',
   'USER',
